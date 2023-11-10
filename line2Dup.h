@@ -5,6 +5,9 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <map>
 
+#define ANGLE_TOLERANCE 0.0000001
+#define ANGLE_MULTIPLE_90 0
+
 #include "mipp.h"  // for SIMD in different platforms
 
 namespace line2Dup
@@ -204,6 +207,9 @@ protected:
                                     const std::vector<TemplatePyramid> &template_pyramids) const;
 };
 
+void spread(const cv::Mat &src, cv::Mat &dst, int T);
+void computeResponseMaps(const cv::Mat &src, std::vector<cv::Mat> &response_maps);
+
 } // namespace line2Dup
 
 namespace shape_based_matching {
@@ -243,11 +249,28 @@ public:
 
     static cv::Mat transform(cv::Mat src, float angle, float scale){
         cv::Mat dst;
-
-        cv::Point2f center(src.cols/2.0f, src.rows/2.0f);
-        cv::Mat rot_mat = cv::getRotationMatrix2D(center, angle, scale);
-        cv::warpAffine(src, dst, rot_mat, src.size());
-
+        if (std::abs(angle - 90.0) < ANGLE_TOLERANCE)
+        {
+            cv::rotate(src, dst, cv::ROTATE_90_CLOCKWISE);
+            cv::resize(dst, dst, cv::Size(), scale, scale);
+        }
+        else if (std::abs(angle - 180.0) < ANGLE_TOLERANCE)
+        {
+            cv::rotate(src, dst, cv::ROTATE_180);
+            cv::resize(dst, dst, cv::Size(), scale, scale);
+        }
+        else if (std::abs(angle - 270.0) < ANGLE_TOLERANCE)
+        {
+            cv::rotate(src, dst, cv::ROTATE_90_COUNTERCLOCKWISE);
+            cv::resize(dst, dst, cv::Size(), scale, scale);
+        }
+        else
+        {
+            // cv::resize(src, dst, cv::Size(), scale, scale);
+            cv::Point2f center(src.cols/2.0f, src.rows/2.0f);
+            cv::Mat rot_mat = cv::getRotationMatrix2D(center, angle, scale);
+            cv::warpAffine(src, dst, rot_mat, src.size());
+        }
         return dst;
     }
     static void save_infos(std::vector<shapeInfo_producer::Info>& infos, std::string path = "infos.yaml"){

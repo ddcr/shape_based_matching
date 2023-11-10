@@ -3,10 +3,15 @@
 #include <iostream>
 #include <assert.h>
 #include <chrono>
+#include <regex>
+#include <experimental/filesystem>
 using namespace std;
 using namespace cv;
 
-static std::string prefix = "/home/meiqua/shape_based_matching/test/";
+cv::Mat displayQuantized(const cv::Mat& quantized);
+
+// static std::string prefix = "/home/meiqua/shape_based_matching/test/";
+static std::string prefix = "/home/ivision/jabil_tag_reader/dev_area/jabil_dev_phase4/SBMatching_Experiments/shape_based_matching/test/";
 
 class Timer
 {
@@ -18,12 +23,14 @@ public:
             (clock_::now() - beg_).count(); }
     void out(std::string message = ""){
         double t = elapsed();
-        std::cout << message << "\nelasped time:" << t << "s" << std::endl;
+        // std::cout << message << "\nelasped time:" << t << "s" << std::endl;
+        std::cout << message << "\nelapsed time:" << t << " ms" << std::endl;
         reset();
     }
 private:
     typedef std::chrono::high_resolution_clock clock_;
-    typedef std::chrono::duration<double, std::ratio<1> > second_;
+    // typedef std::chrono::duration<double, std::ratio<1> > second_;
+    typedef std::chrono::duration<double, std::milli> second_;
     std::chrono::time_point<clock_> beg_;
 };
 // NMS, got from cv::dnn so we don't need opencv contrib
@@ -118,6 +125,256 @@ void NMSBoxes(const std::vector<Rect>& bboxes, const std::vector<float>& scores,
     NMSFast_(bboxes, scores, score_threshold, nms_threshold, eta, top_k, indices, rectOverlap);
 }
 
+}
+
+
+cv::Mat displayQuantized(const cv::Mat& quantized)
+{
+cv::Mat color(quantized.size(), CV_8UC3);
+for (int r = 0; r < quantized.rows; ++r)
+{
+    const uchar* quant_r = quantized.ptr(r);
+    cv::Vec3b* color_r = color.ptr<cv::Vec3b>(r);
+
+    for (int c = 0; c < quantized.cols; ++c)
+    {
+    cv::Vec3b& bgr = color_r[c];
+    switch (quant_r[c])
+    {
+        case 0:   bgr[0]=  0; bgr[1]=  0; bgr[2]=  0;    break;
+        case 1:   bgr[0]= 55; bgr[1]= 55; bgr[2]= 55;    break;
+        case 2:   bgr[0]= 80; bgr[1]= 80; bgr[2]= 80;    break;
+        case 4:   bgr[0]=105; bgr[1]=105; bgr[2]=105;    break;
+        case 8:   bgr[0]=130; bgr[1]=130; bgr[2]=130;    break;
+        case 16:  bgr[0]=155; bgr[1]=155; bgr[2]=155;    break;
+        case 32:  bgr[0]=180; bgr[1]=180; bgr[2]=180;    break;
+        case 64:  bgr[0]=205; bgr[1]=205; bgr[2]=205;    break;
+        case 128: bgr[0]=230; bgr[1]=230; bgr[2]=230;    break;
+        case 255: bgr[0]=  0; bgr[1]=  0; bgr[2]=255;    break;
+        default:  bgr[0]=  0; bgr[1]=255; bgr[2]=  0;    break;
+    }
+    }
+}
+
+return color;
+}
+
+void jabil_match()
+{
+    int num_feature = 150;
+    line2Dup::Detector detector(num_feature, {4, 8}, 235.0f, 240.0f);
+
+    // read JABIL image
+    const std::experimental::filesystem::path path{ prefix+"../../../model_images" };
+    std::vector<std::experimental::filesystem::path> filelist;
+
+    const std::regex base_regex("11_1688656382");
+    std::smatch base_match;
+    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path })
+    {
+        std::string file_str = dir_entry.path().stem().string();
+        if (std::regex_match(file_str, base_match, base_regex))
+        {
+            filelist.push_back(dir_entry.path());
+        }
+    }
+    std::vector<std::string> class_ids;
+    class_ids.push_back("11_1688656382");
+    detector.readClasses(class_ids, "%s_templ.yaml");
+
+    for (auto &f: filelist)
+    {
+        Mat img_orig = imread(f.string());
+        assert(!img_orig.empty() && "check your img path");
+
+        int stride = 16;
+        int n = img_orig.rows/stride;
+        int m = img_orig.cols/stride;
+        Rect roi(0, 0, stride*m , stride*n);
+
+        Mat img = img_orig(roi).clone();
+
+        Timer timer;
+        auto matches = detector.match(img, 90, class_ids);
+        timer.out();
+        std::cout << "matches.size(): " << matches.size() << std::endl;
+
+        for (auto match: matches)
+        {
+            auto templ = detector.getTemplates()
+        }
+
+        cv::imshow("", img);
+        cv::waitKey(0);
+    }
+}
+
+void jabil_create_templates()
+{
+    int num_feature = 150;
+    line2Dup::Detector detector(num_feature, {4, 8}, 235.0f, 240.0f);
+
+    // read JABIL fiducials (templates)
+    const std::experimental::filesystem::path path{ prefix+"../../../model_images" };
+    std::vector<std::experimental::filesystem::path> filelist;
+
+    const std::regex base_regex("11_1688656382..*");
+    std::smatch base_match;
+    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path })
+    {
+        std::string file_str = dir_entry.path().stem().string();
+        // std::cout << file_str << std::endl;
+        if (std::regex_match(file_str, base_match, base_regex))
+        {
+            filelist.push_back(dir_entry.path());
+        }
+    }
+
+    // run all fiducials
+    std::string class_id = "11_1688656382";
+    for (auto &f: filelist)
+    {
+        Mat fiducial_img = imread(f.string());
+        assert(!fiducial_img.empty() && "check your img path");
+
+        // ONLY ALLOW MULTIPLES OF 90 DEGREES
+        shape_based_matching::shapeInfo_producer fid_shapes(fiducial_img, cv::Mat());
+        fid_shapes.angle_range = {0, 270};
+        fid_shapes.angle_step = 90;
+
+        fid_shapes.scale_range = {0.8, 1.2};
+        fid_shapes.scale_step = 0.1;
+        // fid_shapes.scale_range = { 1.0 };
+
+        fid_shapes.produce_infos();
+        for (auto& info: fid_shapes.infos)
+        {
+            cv::Mat to_show = fid_shapes.src_of(info);
+            int templ_id = detector.addTemplate(fid_shapes.src_of(info), class_id, fid_shapes.mask_of(info));
+
+            // visualize the features
+            auto templ = detector.getTemplates(class_id, templ_id);
+            for(int i = 0; i < templ[0].features.size(); i++)
+            {
+                auto feat = templ[0].features[i];
+                cv::circle(to_show, {feat.x+templ[0].tl_x, feat.y+templ[0].tl_y}, 3, {0, 0, 255}, -1);
+            }
+            
+            // will be faster if not showing this
+            std::cout << "Angle: " << info.angle << ", Scale: " << info.scale << std::endl;
+            imshow("train", to_show);
+            waitKey(0);
+        }
+    }
+    detector.writeClasses("%s_templ.yaml");
+
+    std::cout << detector.numClasses() << std::endl;
+    std::cout << detector.numTemplates() << std::endl;
+}
+
+void jabil_test1()
+{
+    int num_feature = 150;
+    line2Dup::Detector detector(num_feature, {4, 8}, 235.0f, 240.0f);
+
+    // read templates (not used for now!!!)
+    std::vector<std::string> ids;
+    ids.push_back("circle");
+    detector.readClasses(ids, prefix+"case0/%s_templ.yaml");
+
+    // read JABIL models
+    const std::experimental::filesystem::path path{ prefix+"../../../model_images/" };
+    std::vector<std::experimental::filesystem::path> filelist;
+    if (is_directory(path))
+    {
+        for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path })
+            filelist.push_back(dir_entry.path());
+    }
+    else if (is_regular_file(path))
+    {
+        filelist.push_back(path);
+    } 
+    else 
+    {
+        std::cerr << "The folder/file specified was invalid!" << std::endl;
+    }
+
+    for (auto &f: filelist)
+    {
+        // We are insterested only in the original files
+        if (f.stem().has_extension())
+        {
+            continue;
+        }
+
+        std::experimental::filesystem::path output_file_mag, output_file_ang;
+        output_file_mag = f;
+        output_file_mag.replace_extension(".0.jpg");
+
+        output_file_ang = f;
+        output_file_ang.replace_extension(".1.jpg");
+
+        Mat test_img = imread(f.string());
+        assert(!test_img.empty() && "check your img path");
+
+        // make the img having 32*n width & height
+        // at least 16*n here for two pyrimads with strides 4 8
+        int stride = 32;
+        int n = test_img.rows/stride;
+        int m = test_img.cols/stride;
+        Rect roi(0, 0, stride*m , stride*n);
+        Mat img = test_img(roi).clone();
+        assert(img.isContinuous());
+
+        Timer timer;
+        // match, img, min score, ids
+        // auto matches = detector.match(img, 90, ids);
+        // qp = detector->process(img, cv::Mat());
+        Ptr<line2Dup::ColorGradientPyramid> qp;
+        qp = detector.getModalities()->process(img, cv::Mat());
+
+        cv::imwrite(output_file_mag.string(), qp->magnitude);
+        cv::imwrite(output_file_ang.string(), qp->angle);
+
+        timer.out();
+
+        // For each pyramid level, precompute linear memories for each ColorGradient
+        for (int l = 0; l < detector.pyramidLevels(); ++l)
+        {
+            int T = detector.getT(l);
+            if (l > 0)
+            {
+                qp->pyrDown();
+            }
+            Mat quantized, spread_quantized;
+            qp->quantize(quantized);
+            line2Dup::spread(quantized, spread_quantized, T);
+
+            std::experimental::filesystem::path output_file_quantized;
+            output_file_quantized = f;
+            char quantized_ext[300];
+            sprintf(quantized_ext, "pyr_%d.jpg", l);
+            output_file_quantized.replace_extension(quantized_ext);
+
+            Mat quantized_color = displayQuantized(quantized);
+            cv::imwrite(output_file_quantized.string(), quantized_color);
+
+            std::vector<Mat> response_maps;
+            line2Dup::computeResponseMaps(spread_quantized, response_maps);
+            // std::cout << "N = " << response_maps.size() << std::endl;
+            for (int k = 0; k < response_maps.size(); ++k)
+            {
+                std::experimental::filesystem::path output_file_response;
+                output_file_response = f;
+                char response_ext[300];
+                sprintf(response_ext, "pyr_%d.%d.jpg", l, k);
+                output_file_response.replace_extension(response_ext);
+                cv::imwrite(output_file_response.string(), response_maps[k]);
+            }
+
+        }
+
+    }
 }
 
 void scale_test(string mode = "test"){
@@ -241,7 +498,7 @@ void angle_test(string mode = "test", bool use_rot = true){
 
         shape_based_matching::shapeInfo_producer shapes(padded_img, padded_mask);
         shapes.angle_range = {0, 360};
-        shapes.angle_step = 1;
+        shapes.angle_step = 45;
 
         shapes.scale_range = {1}; // support just one
         shapes.produce_infos();
@@ -281,15 +538,15 @@ void angle_test(string mode = "test", bool use_rot = true){
             
             // will be faster if not showing this
             imshow("train", to_show);
-            waitKey(1);
+            waitKey(0);
 
             std::cout << "templ_id: " << templ_id << std::endl;
             if(templ_id != -1){
                 infos_have_templ.push_back(info);
             }
         }
-        detector.writeClasses(prefix+"case1/%s_templ.yaml");
-        shapes.save_infos(infos_have_templ, prefix + "case1/test_info.yaml");
+        detector.writeClasses(prefix+"case1/%s_templ.ddcr.yaml");
+        shapes.save_infos(infos_have_templ, prefix + "case1/test_info.ddcr.yaml");
         std::cout << "train end" << std::endl << std::endl;
     }else if(mode=="test"){
         std::vector<std::string> ids;
@@ -322,7 +579,8 @@ void angle_test(string mode = "test", bool use_rot = true){
         auto matches = detector.match(img, 90, ids);
         timer.out();
 
-        if(img.channels() == 1) cvtColor(img, img, CV_GRAY2BGR);
+        // if(img.channels() == 1) cvtColor(img, img, CV_GRAY2BGR);
+        if(img.channels() == 1) cvtColor(img, img, cv::COLOR_GRAY2BGR);
 
         std::cout << "matches.size(): " << matches.size() << std::endl;
         size_t top5 = 1;
@@ -507,8 +765,12 @@ void MIPP_test(){
 }
 
 int main(){
+    jabil_match();
+    // jabil_create_templates();
+    // jabil_test();
     // scale_test("test");
-    angle_test("test", true); // test or train
+    // scale_test("train");
+    // angle_test("train", true); // test or train
     // noise_test("test");
     return 0;
 }

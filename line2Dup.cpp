@@ -15,12 +15,14 @@ public:
             (clock_::now() - beg_).count(); }
     void out(std::string message = ""){
         double t = elapsed();
-        std::cout << message << "\nelasped time:" << t << "s\n" << std::endl;
+        // std::cout << message << "\nelasped time:" << t << "s\n" << std::endl;
+        std::cout << message << "\nelapsed time:" << t << " ms" << std::endl;
         reset();
     }
 private:
     typedef std::chrono::high_resolution_clock clock_;
-    typedef std::chrono::duration<double, std::ratio<1> > second_;
+    // typedef std::chrono::duration<double, std::ratio<1> > second_;
+    typedef std::chrono::duration<double, std::milli> second_;
     std::chrono::time_point<clock_> beg_;
 };
 
@@ -586,7 +588,9 @@ static void orUnaligned8u(const uchar *src, const int src_stride,
     }
 }
 
-static void spread(const Mat &src, Mat &dst, int T)
+// TODO: ddcr change
+// static void spread(const Mat &src, Mat &dst, int T)
+void spread(const Mat &src, Mat &dst, int T)
 {
     // Allocate and zero-initialize spread (OR'ed) image
     dst = Mat::zeros(src.size(), CV_8U);
@@ -607,7 +611,9 @@ static const unsigned char LUT3 = 3;
 CV_DECL_ALIGNED(16)
 static const unsigned char SIMILARITY_LUT[256] = {0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, 0, LUT3, 4, 4, LUT3, LUT3, 4, 4, 0, LUT3, 4, 4, LUT3, LUT3, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, LUT3, 4, 4, 4, 4, LUT3, LUT3, LUT3, LUT3, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, LUT3, LUT3, LUT3, 4, 4, 4, 4, 4, 4, 4, 4, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, 0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, 4, 4, LUT3, LUT3, 4, 4, 0, LUT3, 4, 4, LUT3, LUT3, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, LUT3, 4, 4, 4, 4, LUT3, LUT3, LUT3, LUT3, 4, 4, 4, 4, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, 0, 0, 0, LUT3, LUT3, LUT3, LUT3, 4, 4, 4, 4, 4, 4, 4, 4};
 
-static void computeResponseMaps(const Mat &src, std::vector<Mat> &response_maps)
+// TODO: ddcr change
+// static void computeResponseMaps(const Mat &src, std::vector<Mat> &response_maps)
+void computeResponseMaps(const Mat &src, std::vector<Mat> &response_maps)
 {
     CV_Assert((src.rows * src.cols) % 16 == 0);
 
