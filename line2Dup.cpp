@@ -16,7 +16,7 @@ public:
     void out(std::string message = ""){
         double t = elapsed();
         // std::cout << message << "\nelasped time:" << t << "s\n" << std::endl;
-        std::cout << message << "\nelapsed time:" << t << " ms" << std::endl;
+        std::cout << message << ":" << t << " ms" << std::endl;
         reset();
     }
 private:
@@ -1096,7 +1096,7 @@ std::vector<Match> Detector::match(Mat source, float threshold,
         sizes.push_back(quantized.size());
     }
 
-    timer.out("construct response map");
+    // timer.out("construct response map");
 
     if (class_ids.empty())
     {
@@ -1121,7 +1121,7 @@ std::vector<Match> Detector::match(Mat source, float threshold,
     std::vector<Match>::iterator new_end = std::unique(matches.begin(), matches.end());
     matches.erase(new_end, matches.end());
 
-    timer.out("templ match");
+    // timer.out("templ match");
 
     return matches;
 }

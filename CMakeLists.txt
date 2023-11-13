@@ -36,6 +36,6 @@ include_directories (${INCLUDE_DIRECTORIES} "${CMAKE_CURRENT_SOURCE_DIR}/MIPP/")
 
 
 # test exe
-add_executable(${PROJECT_NAME}_test line2Dup.cpp test.cpp)
+add_executable(${PROJECT_NAME}_test line2Dup.cpp test_jabil.cpp)
 target_link_libraries(${PROJECT_NAME}_test ${OpenCV_LIBS} stdc++fs)
 
