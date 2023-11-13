@@ -74,6 +74,10 @@ void Template::read(const FileNode &fn)
     height = fn["height"];
     tl_x = fn["tl_x"];
     tl_y = fn["tl_y"];
+
+    sscale = fn["sscale"];
+    orientation = fn["orientation"];
+
     pyramid_level = fn["pyramid_level"];
 
     FileNode features_fn = fn["features"];
@@ -91,6 +95,10 @@ void Template::write(FileStorage &fs) const
     fs << "height" << height;
     fs << "tl_x" << tl_x;
     fs << "tl_y" << tl_y;
+
+    fs << "scale" << sscale;
+    fs << "orientation" << orientation;
+
     fs << "pyramid_level" << pyramid_level;
 
     fs << "features"
@@ -588,9 +596,7 @@ static void orUnaligned8u(const uchar *src, const int src_stride,
     }
 }
 
-// TODO: ddcr change
-// static void spread(const Mat &src, Mat &dst, int T)
-void spread(const Mat &src, Mat &dst, int T)
+STATIC_IF void spread(const Mat &src, Mat &dst, int T)
 {
     // Allocate and zero-initialize spread (OR'ed) image
     dst = Mat::zeros(src.size(), CV_8U);
@@ -611,9 +617,7 @@ static const unsigned char LUT3 = 3;
 CV_DECL_ALIGNED(16)
 static const unsigned char SIMILARITY_LUT[256] = {0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, 0, LUT3, 4, 4, LUT3, LUT3, 4, 4, 0, LUT3, 4, 4, LUT3, LUT3, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, LUT3, 4, 4, 4, 4, LUT3, LUT3, LUT3, LUT3, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, LUT3, LUT3, LUT3, 4, 4, 4, 4, 4, 4, 4, 4, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, LUT3, 0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 4, LUT3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, 4, 4, LUT3, LUT3, 4, 4, 0, LUT3, 4, 4, LUT3, LUT3, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, LUT3, LUT3, 4, 4, 4, 4, LUT3, LUT3, LUT3, LUT3, 4, 4, 4, 4, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, LUT3, 0, 0, 0, 0, LUT3, LUT3, LUT3, LUT3, 4, 4, 4, 4, 4, 4, 4, 4};
 
-// TODO: ddcr change
-// static void computeResponseMaps(const Mat &src, std::vector<Mat> &response_maps)
-void computeResponseMaps(const Mat &src, std::vector<Mat> &response_maps)
+STATIC_IF void computeResponseMaps(const Mat &src, std::vector<Mat> &response_maps)
 {
     CV_Assert((src.rows * src.cols) % 16 == 0);
 
@@ -1274,7 +1278,10 @@ void Detector::matchClass(const LinearMemoryPyramid &lm_pyramid,
 }
 
 int Detector::addTemplate(const Mat source, const std::string &class_id,
-                          const Mat &object_mask, int num_features)
+                          const Mat &object_mask,
+                          float sscale,
+                          float orientation,
+                          int num_features)
 {
     std::vector<TemplatePyramid> &template_pyramids = class_templates[class_id];
     int template_id = static_cast<int>(template_pyramids.size());
@@ -1287,7 +1294,7 @@ int Detector::addTemplate(const Mat source, const std::string &class_id,
         Ptr<ColorGradientPyramid> qp = modality->process(source, object_mask);
 
         if(num_features > 0)
-        qp->num_features = num_features;
+            qp->num_features = num_features;
 
         for (int l = 0; l < pyramid_levels; ++l)
         {
@@ -1296,6 +1303,8 @@ int Detector::addTemplate(const Mat source, const std::string &class_id,
                 qp->pyrDown();
 
             bool success = qp->extractTemplate(tp[l]);
+            tp[l].sscale = sscale;
+            tp[l].orientation = orientation;
             if (!success)
                 return -1;
         }

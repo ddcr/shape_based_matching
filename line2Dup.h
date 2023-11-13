@@ -37,6 +37,10 @@ struct Template
     int pyramid_level;
     std::vector<Feature> features;
 
+    float sscale;
+    float orientation;
+    // std::string fid_img;
+
     void read(const cv::FileNode &fn);
     void write(cv::FileStorage &fs) const;
 };
@@ -159,7 +163,10 @@ public:
                                                      const cv::Mat masks = cv::Mat()) const;
 
     int addTemplate(const cv::Mat sources, const std::string &class_id,
-                                    const cv::Mat &object_mask, int num_features = 0);
+                    const cv::Mat &object_mask,
+                    float sscale = -1.0,
+                    float orientation = -1.0,
+                    int num_features = 0);
 
     int addTemplate_rotate(const std::string &class_id, int zero_id, float theta, cv::Point2f center);
 
@@ -207,8 +214,12 @@ protected:
                                     const std::vector<TemplatePyramid> &template_pyramids) const;
 };
 
-void spread(const cv::Mat &src, cv::Mat &dst, int T);
-void computeResponseMaps(const cv::Mat &src, std::vector<cv::Mat> &response_maps);
+// TODO (DDCR): adjust static as necessary (one of the tests requires the removal of the keyword static).
+// #define STATIC_IF static
+#define STATIC_IF
+
+STATIC_IF void spread(const cv::Mat &src, cv::Mat &dst, int T);
+STATIC_IF void computeResponseMaps(const cv::Mat &src, std::vector<cv::Mat> &response_maps);
 
 } // namespace line2Dup
 

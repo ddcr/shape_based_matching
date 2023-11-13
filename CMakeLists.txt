@@ -28,7 +28,8 @@ SET(CMAKE_CXX_FLAGS_RELEASE "-O3")
 # opencv
 # set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} /opt/ros/kinetic)
 find_package(OpenCV 4 REQUIRED)
-include_directories(${OpenCV_INCLUDE_DIRS})
+find_package(Boost 1.7 REQUIRED program_options)
+include_directories(${OpenCV_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
 
 
 # include MIPP headers
@@ -37,5 +38,5 @@ include_directories (${INCLUDE_DIRECTORIES} "${CMAKE_CURRENT_SOURCE_DIR}/MIPP/")
 
 # test exe
 add_executable(${PROJECT_NAME}_test line2Dup.cpp test_jabil.cpp)
-target_link_libraries(${PROJECT_NAME}_test ${OpenCV_LIBS} stdc++fs)
+target_link_libraries(${PROJECT_NAME}_test ${OpenCV_LIBS} ${Boost_LIBRARIES} stdc++fs)
 

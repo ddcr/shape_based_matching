@@ -1,6 +1,7 @@
 #include "line2Dup.h"
 #include <memory>
 #include <iostream>
+#include <boost/program_options.hpp>
 #include <assert.h>
 #include <chrono>
 #include <regex>
@@ -10,8 +11,20 @@ using namespace cv;
 
 cv::Mat displayQuantized(const cv::Mat& quantized);
 
-// static std::string prefix = "/home/meiqua/shape_based_matching/test/";
-static std::string prefix = "/home/ivision/jabil_tag_reader/dev_area/jabil_dev_phase4/SBMatching_Experiments/shape_based_matching/test/";
+static std::string PREFIX_PATH = "/home/ivision/jabil_tag_reader/dev_area/jabil_dev_phase4";
+
+/**
+ * \brief Detector Constructor.
+ *
+ * \param weak_threshold   When quantizing, discard gradients with magnitude less than this.
+ * \param num_features     How many features a template must contain.
+ * \param strong_threshold Consider as candidate features only gradients whose norms are
+ *                         larger than this.
+*/
+int DEF_NUM_FEATURE = 150;
+float DEF_WEAK_THRESHOLD = 235.0f;
+float DEF_STRONG_THRESHOLD = 240.0f;
+
 
 class Timer
 {
@@ -159,335 +172,16 @@ for (int r = 0; r < quantized.rows; ++r)
 return color;
 }
 
-void jabil_match()
-{
-    int num_feature = 150;
-    line2Dup::Detector detector(num_feature, {4, 8}, 235.0f, 240.0f);
 
-#if 0
-    // read JABIL image
-    const std::experimental::filesystem::path path{ prefix+"../../../model_images" };
-    std::vector<std::experimental::filesystem::path> filelist;
-
-    const std::regex base_regex("11_1688656382");
-    std::smatch base_match;
-    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path })
-    {
-        std::string file_str = dir_entry.path().stem().string();
-        if (std::regex_match(file_str, base_match, base_regex))
-        {
-            filelist.push_back(dir_entry.path());
-        }
-    }
-#else
-    const std::experimental::filesystem::path path{ prefix+"../../../inspection_images/2023-07-27/JabilCam" };
-    std::vector<std::experimental::filesystem::path> filelist;
-
-    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path })
-    {
-        filelist.push_back(dir_entry.path());
-    }
-#endif
-
-    std::vector<std::string> class_ids;
-    class_ids.push_back("11_1688656382");
-    detector.readClasses(class_ids, "%s_templ.yaml");
-
-    for (auto &f: filelist)
-    {
-        std::cout << f << std::endl;
-
-        Mat img_orig = imread(f.string());
-        assert(!img_orig.empty() && "check your img path");
-
-        int stride = 16;
-        int n = img_orig.rows/stride;
-        int m = img_orig.cols/stride;
-        Rect roi(0, 0, stride*m , stride*n);
-
-        Mat img = img_orig(roi).clone();
-
-        Timer timer;
-        auto matches = detector.match(img, 95, class_ids);
-        timer.out();
-        std::cout << "matches.size(): " << matches.size() << std::endl;
-
-        for (auto match: matches)
-        {
-            for (auto class_id: class_ids)
-            {
-                auto templ = detector.getTemplates(class_id, match.template_id);
-
-                int x = templ[0].width + match.x;
-                int y = templ[0].height + match.y;
-                int r = templ[0].width/2;
-
-                for(int i = 0; i < templ[0].features.size(); i++){
-                    auto feat = templ[0].features[i];
-                    cv::circle(
-                        img,
-                        {feat.x + match.x, feat.y + match.y},
-                        2,
-                        {150, 0, 150},
-                        -1
-                    );
-                }
-
-                cv::putText(
-                    img,
-                    to_string(int(round(match.similarity))),
-                    cv::Point(match.x + r -10, match.y - 3),
-                    cv::FONT_HERSHEY_PLAIN,
-                    2,
-                    {150, 0, 150}
-                );
-                cv::rectangle(
-                    img,
-                    {match.x, match.y},
-                    {x, y},
-                    {150, 0, 150},
-                    2
-                );
-            }
-        }
-
-        // if (matches.size() > 0)
-        // {
-        //     cv::imshow("", img);
-        //     cv::waitKey(0);
-        // }
-    }
-}
-
-void jabil_create_one_template()
-{
-    int num_feature = 150;
-    line2Dup::Detector detector(num_feature, {4, 8}, 235.0f, 240.0f);
-
-    // read JABIL fiducial crops
-    const std::experimental::filesystem::path path{ prefix+"../../../model_images" };
-    std::vector<std::experimental::filesystem::path> filelist;
-
-    const std::regex base_regex("11_1688656382..*");
-    std::smatch base_match;
-    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path })
-    {
-        std::string file_str = dir_entry.path().stem().string();
-        if (std::regex_match(file_str, base_match, base_regex))
-        {
-            filelist.push_back(dir_entry.path());
-        }
-    }
-
-    // run all fiducials
-    std::string class_id = "11_1688656382";
-    for (auto &f: filelist)
-    {
-        Mat fiducial_img = imread(f.string());
-        assert(!fiducial_img.empty() && "check your img path");
-
-        // ONLY ALLOW MULTIPLES OF 90 DEGREES
-        shape_based_matching::shapeInfo_producer fid_shapes(fiducial_img, cv::Mat());
-        fid_shapes.angle_range = {0, 270};
-        fid_shapes.angle_step = 90;
-
-        fid_shapes.scale_range = {0.8, 1.2};
-        fid_shapes.scale_step = 0.1;
-        // fid_shapes.scale_range = { 1.0 };
-
-        fid_shapes.produce_infos();
-        for (auto& info: fid_shapes.infos)
-        {
-            cv::Mat to_show = fid_shapes.src_of(info);
-            int templ_id = detector.addTemplate(fid_shapes.src_of(info), class_id, fid_shapes.mask_of(info));
-
-            // visualize the features
-            auto templ = detector.getTemplates(class_id, templ_id);
-            for(int i = 0; i < templ[0].features.size(); i++)
-            {
-                auto feat = templ[0].features[i];
-                cv::circle(to_show, {feat.x+templ[0].tl_x, feat.y+templ[0].tl_y}, 3, {0, 0, 255}, -1);
-            }
-            
-            // will be faster if not showing this
-            std::cout << "Angle: " << info.angle << ", Scale: " << info.scale << std::endl;
-            imshow("train", to_show);
-            waitKey(0);
-        }
-    }
-    detector.writeClasses("%s_templ.yaml");
-
-    std::cout << detector.numClasses() << std::endl;
-    std::cout << detector.numTemplates() << std::endl;
-}
-
-void jabil_create_templates()
-{
-    int num_feature = 150;
-    line2Dup::Detector detector(num_feature, {4, 8}, 235.0f, 240.0f);
-
-    // read JABIL fiducial crops
-    const std::experimental::filesystem::path path{ prefix + "../../../model_images" };
-    std::map<std::string, std::vector<std::string>> file_map;
-
-    const std::regex base_regex("\\d+_\\d+\\..*");
-    std::smatch base_match;
-    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path })
-    {
-        std::string file_str = dir_entry.path().stem().string();
-        if (std::regex_match(file_str, base_match, base_regex))
-        {
-            file_map[dir_entry.path().stem().stem()].push_back(dir_entry.path());
-        }
-    }
-    
-    for (auto const& fm: file_map)
-    {
-        std::string class_id = fm.first;
-        for (auto const& f: fm.second)
-        {
-            cv::Mat fiducial_img = cv::imread(f);
-            assert(!fiducial_img.empty() && "check your img path");
-
-            // ONLY ALLOW MULTIPLES OF 90 DEGREES
-            shape_based_matching::shapeInfo_producer fid_shapes(fiducial_img, cv::Mat());
-            fid_shapes.angle_range = {0, 270};
-            fid_shapes.angle_step = 90;
-
-            fid_shapes.scale_range = {0.8, 1.2};
-            fid_shapes.scale_step = 0.1;
-            fid_shapes.produce_infos();
-
-            for (auto& info: fid_shapes.infos)
-            {
-                int templ_id = detector.addTemplate(
-                    fid_shapes.src_of(info), 
-                    class_id,
-                    fid_shapes.mask_of(info)
-                );
-            }
-        }
-
-        detector.writeClasses("../../../model_images/%s_templ.yaml.gz");
-
-    }
-}
-
-void jabil_read_all_templates_and_match()
-{
-    int num_feature = 150;
-    line2Dup::Detector detector(num_feature, {4, 8}, 235.0f, 240.0f);
-
-    // read JABIL template models
-    const std::experimental::filesystem::path path{ prefix  + "../../../model_images"};
-    std::vector<std::string> class_ids;
-
-    // const std::regex base_regex(".*\\.yaml.gz");
-    const std::regex base_regex("(.*)_templ\\.yaml.gz");
-
-
-    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path })
-    {
-        std::string file_str = dir_entry.path().filename().string();
-        auto p_beg = std::sregex_iterator(file_str.begin(), file_str.end(), base_regex);
-        auto p_end = std::sregex_iterator();
-
-        for (std::sregex_iterator p = p_beg; p != p_end; ++p)
-            class_ids.push_back((*p)[1]);
-    }
-    detector.readClasses(class_ids, "%s_templ.yaml.gz");
-    std::cout << detector.numClasses() << std::endl;
-    for (auto const& class_id: detector.classIds())
-    {
-        std::cout << class_id << std::endl;
-    }
-    std::cout << detector.numTemplates() << std::endl;
-
-    // Take time of matching for one image
-    // read test images
-    const std::experimental::filesystem::path path1{ 
-        prefix + "../../../inspection_images/2023-07-27/JabilCam-modelos/tag_candidate/RANDOM" 
-    };
-    std::vector<std::experimental::filesystem::path> filelist;
-
-    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path1 })
-    {
-        filelist.push_back(dir_entry.path());
-    }
-
-    for (auto &f: filelist)
-    {
-        std::cout << f.filename() << std::endl;
-
-        Mat img_orig = imread(f.string());
-        assert(!img_orig.empty() && "check your img path");
-
-        int stride = 16;
-        int n = img_orig.rows/stride;
-        int m = img_orig.cols/stride;
-        Rect roi(0, 0, stride*m , stride*n);
-        Mat img = img_orig(roi).clone();
-
-        Timer timer;
-        auto matches = detector.match(img, 95, class_ids);
-        timer.out();
-        std::cout << "matches.size(): " << matches.size() << std::endl;
-
-        for (auto match: matches)
-        {
-            auto templ = detector.getTemplates(match.class_id, match.template_id);
-
-            int x = templ[0].width + match.x;
-            int y = templ[0].height + match.y;
-            int r = templ[0].width/2;
-
-            for(int i = 0; i < templ[0].features.size(); i++){
-                auto feat = templ[0].features[i];
-                cv::circle(
-                    img,
-                    {feat.x + match.x, feat.y + match.y},
-                    2,
-                    {150, 0, 150},
-                    -1
-                );
-            }
-
-            cv::putText(
-                img,
-                to_string(int(round(match.similarity))),
-                cv::Point(match.x + r -10, match.y - 3),
-                cv::FONT_HERSHEY_PLAIN,
-                2,
-                {150, 0, 150}
-            );
-            cv::rectangle(
-                img,
-                {match.x, match.y},
-                {x, y},
-                {150, 0, 150},
-                2
-            );
-        }
-
-        cv::imshow("", img);
-        cv::waitKey(0);
-
-    }
-
-}
+/* ================================================================================================== */
 
 void jabil_test1()
 {
     int num_feature = 150;
     line2Dup::Detector detector(num_feature, {4, 8}, 235.0f, 240.0f);
 
-    // read templates (not used for now!!!)
-    std::vector<std::string> ids;
-    ids.push_back("circle");
-    detector.readClasses(ids, prefix+"case0/%s_templ.yaml");
-
     // read JABIL models
-    const std::experimental::filesystem::path path{ prefix+"../../../model_images/" };
+    const std::experimental::filesystem::path path{ PREFIX_PATH + "/model_images" };
     std::vector<std::experimental::filesystem::path> filelist;
     if (is_directory(path))
     {
@@ -581,12 +275,426 @@ void jabil_test1()
     }
 }
 
+void jabil_match()
+{
+    int num_feature = 150;
+    line2Dup::Detector detector(num_feature, {4, 8}, 235.0f, 240.0f);
 
-int main(){
+#if 0
+    // read JABIL image
+    const std::experimental::filesystem::path path{ PREFIX_PATH + "/model_images" };
+    std::vector<std::experimental::filesystem::path> filelist;
+
+    const std::regex base_regex("11_1688656382");
+    std::smatch base_match;
+    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path })
+    {
+        std::string file_str = dir_entry.path().stem().string();
+        if (std::regex_match(file_str, base_match, base_regex))
+        {
+            filelist.push_back(dir_entry.path());
+        }
+    }
+#else
+    const std::experimental::filesystem::path path{ PREFIX_PATH + "/inspection_images/2023-07-27/JabilCam" };
+    std::vector<std::experimental::filesystem::path> filelist;
+
+    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path })
+    {
+        filelist.push_back(dir_entry.path());
+    }
+#endif
+
+    std::vector<std::string> class_ids;
+    class_ids.push_back("11_1688656382");
+    detector.readClasses(class_ids, "%s_templ.yaml");
+
+    for (auto &f: filelist)
+    {
+        std::cout << f << std::endl;
+
+        Mat img_orig = imread(f.string());
+        assert(!img_orig.empty() && "check your img path");
+
+        int stride = 16;
+        int n = img_orig.rows/stride;
+        int m = img_orig.cols/stride;
+        Rect roi(0, 0, stride*m , stride*n);
+
+        Mat img = img_orig(roi).clone();
+
+        Timer timer;
+        auto matches = detector.match(img, 95, class_ids);
+        timer.out();
+        std::cout << "matches.size(): " << matches.size() << std::endl;
+
+        for (auto match: matches)
+        {
+            for (auto class_id: class_ids)
+            {
+                auto templ = detector.getTemplates(class_id, match.template_id);
+
+                int x = templ[0].width + match.x;
+                int y = templ[0].height + match.y;
+                int r = templ[0].width/2;
+
+                for(int i = 0; i < templ[0].features.size(); i++){
+                    auto feat = templ[0].features[i];
+                    cv::circle(
+                        img,
+                        {feat.x + match.x, feat.y + match.y},
+                        2,
+                        {150, 0, 150},
+                        -1
+                    );
+                }
+
+                cv::putText(
+                    img,
+                    to_string(int(round(match.similarity))),
+                    cv::Point(match.x + r -10, match.y - 3),
+                    cv::FONT_HERSHEY_PLAIN,
+                    2,
+                    {150, 0, 150}
+                );
+                cv::rectangle(
+                    img,
+                    {match.x, match.y},
+                    {x, y},
+                    {150, 0, 150},
+                    2
+                );
+            }
+        }
+
+        // if (matches.size() > 0)
+        // {
+        //     cv::imshow("", img);
+        //     cv::waitKey(0);
+        // }
+    }
+}
+
+void jabil_create_one_template()
+{
+    int num_feature = 150;
+    line2Dup::Detector detector(num_feature, {4, 8}, 235.0f, 240.0f);
+
+    // read JABIL fiducial crops
+    const std::experimental::filesystem::path template_path{ PREFIX_PATH + "/model_images" };
+    std::vector<std::experimental::filesystem::path> filelist;
+
+    const std::regex base_regex("11_1688656382..*");
+    std::smatch base_match;
+    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ template_path })
+    {
+        std::string file_str = dir_entry.path().stem().string();
+        if (std::regex_match(file_str, base_match, base_regex))
+        {
+            filelist.push_back(dir_entry.path());
+        }
+    }
+
+    // run all fiducials
+    std::string class_id = "11_1688656382";
+    for (auto &f: filelist)
+    {
+        Mat fiducial_img = imread(f.string());
+        assert(!fiducial_img.empty() && "check your img path");
+
+        // ONLY ALLOW MULTIPLES OF 90 DEGREES
+        shape_based_matching::shapeInfo_producer fid_shapes(fiducial_img, cv::Mat());
+        fid_shapes.angle_range = {0, 270};
+        fid_shapes.angle_step = 90;
+
+        fid_shapes.scale_range = {0.8, 1.2};
+        fid_shapes.scale_step = 0.1;
+        // fid_shapes.scale_range = { 1.0 };
+
+        fid_shapes.produce_infos();
+        for (auto& info: fid_shapes.infos)
+        {
+            cv::Mat to_show = fid_shapes.src_of(info);
+            int templ_id = detector.addTemplate(fid_shapes.src_of(info), class_id, fid_shapes.mask_of(info));
+
+            // visualize the features
+            auto templ = detector.getTemplates(class_id, templ_id);
+            for(int i = 0; i < templ[0].features.size(); i++)
+            {
+                auto feat = templ[0].features[i];
+                cv::circle(to_show, {feat.x+templ[0].tl_x, feat.y+templ[0].tl_y}, 3, {0, 0, 255}, -1);
+            }
+            
+            // will be faster if not showing this
+            std::cout << "Angle: " << info.angle << ", Scale: " << info.scale << std::endl;
+            imshow("train", to_show);
+            waitKey(0);
+        }
+    }
+    detector.writeClasses("%s_templ.yaml");
+
+    std::cout << detector.numClasses() << std::endl;
+    std::cout << detector.numTemplates() << std::endl;
+}
+
+void jabil_create_templates(line2Dup::Detector detector)
+{
+    // line2Dup::Detector detector(DEF_NUM_FEATURE, {4, 8}, DEF_WEAK_THRESHOLD, DEF_STRONG_THRESHOLD);
+
+    // read JABIL fiducial crops
+    const std::experimental::filesystem::path template_path{ PREFIX_PATH + "/model_images" };
+    std::map<std::string, std::vector<std::string>> file_map;
+
+    const std::regex base_regex("\\d+_\\d+\\..*");
+    std::smatch base_match;
+    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ template_path })
+    {
+        std::string file_str = dir_entry.path().stem().string();
+        if (std::regex_match(file_str, base_match, base_regex))
+        {
+            file_map[dir_entry.path().stem().stem()].push_back(dir_entry.path());
+        }
+    }
+    
+    for (auto const& fm: file_map)
+    {
+        std::string class_id = fm.first;
+        for (auto const& f: fm.second)
+        {
+            cv::Mat fiducial_img = cv::imread(f);
+            assert(!fiducial_img.empty() && "check your img path");
+
+            // ONLY ALLOW MULTIPLES OF 90 DEGREES
+            shape_based_matching::shapeInfo_producer fid_shapes(fiducial_img, cv::Mat());
+            fid_shapes.angle_range = {0, 270};
+            fid_shapes.angle_step = 90;
+
+            fid_shapes.scale_range = {0.8, 1.2};
+            fid_shapes.scale_step = 0.1;
+            fid_shapes.produce_infos();
+
+            for (auto& info: fid_shapes.infos)
+            {
+                int templ_id = detector.addTemplate(
+                    fid_shapes.src_of(info), 
+                    class_id,
+                    fid_shapes.mask_of(info),
+                    info.scale,
+                    info.angle
+                );
+            }
+        }
+
+        std::cout << "Writing templates ...";
+        detector.writeClasses( template_path.string() + "/%s_templ.yaml.gz");
+        std::cout << " done!" << std::endl;
+    }
+}
+
+void jabil_read_all_templates_and_match(
+    float weak_thresh, float strong_thresh, int num_feat, bool create_template
+)
+{
+    line2Dup::Detector detector(num_feat, {4, 8}, weak_thresh, strong_thresh);
+
+    if (create_template)
+    {
+        jabil_create_templates(detector);
+    }
+
+    // read JABIL template models
+    std::cout << "Reading templates ... ";
+    const std::experimental::filesystem::path template_path{ PREFIX_PATH + "/model_images"};
+    std::vector<std::string> class_ids;
+
+    const std::regex base_regex("(.*)_templ\\.yaml.gz");
+    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ template_path })
+    {
+        std::string file_str = dir_entry.path().filename().string();
+        auto p_beg = std::sregex_iterator(file_str.begin(), file_str.end(), base_regex);
+        auto p_end = std::sregex_iterator();
+
+        for (std::sregex_iterator p = p_beg; p != p_end; ++p)
+        {
+            class_ids.push_back((*p)[1]);
+        }
+    }
+    std::cout << " done!" << std::endl;
+
+#if 0
+    detector.readClasses(class_ids, template_path.string() + "/%s_templ.yaml.gz");
+    std::cout << detector.numClasses() << std::endl;
+    for (auto const& class_id: detector.classIds())
+    {
+        std::cout << class_id << std::endl;
+    }
+    std::cout << detector.numTemplates() << std::endl;
+
+    // Take time of matching for one image
+    // read test images
+    const std::experimental::filesystem::path path_test_images{ 
+        PREFIX_PATH + "/inspection_images/2023-07-27/JabilCam-modelos/tag_candidate/VIKING" 
+    };
+
+    std::vector<std::experimental::filesystem::path> filelist;
+    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path_test_images })
+    {
+        filelist.push_back(dir_entry.path());
+    }
+
+    for (auto &f: filelist)
+    {
+        std::cout << f.filename() << std::endl;
+
+        Mat img_orig = imread(f.string());
+        assert(!img_orig.empty() && "check your img path");
+
+        int stride = 16;
+        int n = img_orig.rows/stride;
+        int m = img_orig.cols/stride;
+        Rect roi(0, 0, stride*m , stride*n);
+        Mat img = img_orig(roi).clone();
+
+        Timer timer;
+        auto matches = detector.match(img, 90, class_ids);
+        timer.out();
+        std::cout << "matches.size(): " << matches.size() << std::endl;
+
+        if (!(matches.size() > 0))
+        {
+            //  Add a mark
+            cv::Mat cross_img(img.rows, img.cols, CV_8UC3, cv::Scalar(0, 0, 0));
+            cv::line(cross_img, cv::Point(0, 0), cv::Point(img.rows, img.cols), cv::Scalar(0, 0, 255), 2);
+            cv::line(cross_img, cv::Point(img.rows, 0), cv::Point(0, img.cols), cv::Scalar(0, 0, 255), 2);
+            cv::addWeighted(img, 1, cross_img, 1, 0, img);
+        }
+
+        // Use NMS to filter overlapping boxes of different scales but similar score
+        std::vector<cv::Rect> boxes;
+        std::vector<float> scores;
+        std::vector<int> indices;
+        for(auto match: matches){
+            cv::Rect box;
+            box.x = match.x;
+            box.y = match.y;
+
+            auto templ = detector.getTemplates(match.class_id, match.template_id);
+
+            box.width = templ[0].width;
+            box.height = templ[0].height;
+            boxes.push_back(box);
+            scores.push_back(match.similarity);
+        }
+        cv_dnn::NMSBoxes(boxes, scores, 0, 0.5f, indices);
+
+        for (auto idx: indices)
+        {
+            auto match = matches[idx];
+            auto templ = detector.getTemplates(match.class_id, match.template_id);
+
+            int x = templ[0].width + match.x;
+            int y = templ[0].height + match.y;
+            int r = templ[0].width/2;
+
+            for(int i = 0; i < templ[0].features.size(); i++){
+                auto feat = templ[0].features[i];
+                cv::circle(
+                    img,
+                    {feat.x + match.x, feat.y + match.y},
+                    2,
+                    {150, 0, 150},
+                    -1
+                );
+            }
+
+            // Title
+            int baseline = 0;
+            cv::Size textSize = cv::getTextSize(match.class_id, cv::FONT_HERSHEY_PLAIN, 1.0, 2, &baseline);
+            int xt = (img.cols - textSize.width) / 2; // Centered horizontally
+            int yt = textSize.height + 10; // 10 pixels below the top edge
+            cv::putText(
+                img,
+                match.class_id,
+                cv::Point(xt, yt),
+                cv::FONT_HERSHEY_PLAIN,
+                2,
+                {150, 0, 150}
+            );
+
+            cv::putText(
+                img,
+                to_string(int(round(match.similarity))),
+                cv::Point(match.x + r -10, match.y - 3),
+                cv::FONT_HERSHEY_PLAIN,
+                2,
+                {150, 0, 150}
+            );
+            cv::rectangle(// TODO: ddcr remove od add static as needed
+// void computeResponseMaps(const Mat &src, std::vector<Mat> &response_maps)
+
+                img,
+                {match.x, match.y},
+                {x, y},
+                {150, 0, 150},
+                2
+            );
+        }
+
+        cv::imshow("", img);
+        cv::waitKey(0);
+    }
+#endif
+}
+
+int main(int argc, const char** argv){
     // jabil_match();
-    jabil_read_all_templates_and_match();
-    // jabil_create_templates();
     // jabil_create_one_template();
     // jabil_test();
+
+    float weak_threshold, strong_threshold;
+    int num_features;
+    bool create_templates;
+    boost::program_options::options_description desc("Allowed options");
+    desc.add_options()
+        (
+            "weak_threshold,w",
+            boost::program_options::value<float>(&weak_threshold)->default_value(DEF_WEAK_THRESHOLD),
+            "Weak threshold"
+        )
+        (
+            "strong_threshold,s",
+            boost::program_options::value<float>(&strong_threshold)->default_value(DEF_STRONG_THRESHOLD),
+            "Strong threshold"
+        )
+        (
+            "num_features,n",
+            boost::program_options::value<int>(&num_features)->default_value(DEF_NUM_FEATURE),
+            "Number of features"
+        )
+        (
+            "create_template,c",
+            boost::program_options::value<bool>(&create_templates)->default_value(false),
+            "Create templates?"
+        )
+        ("help,h", "Print usage information");
+
+    // parse options
+    boost::program_options::variables_map vm;
+    boost::program_options::store(boost::program_options::parse_command_line(argc, argv, desc), vm);
+    boost::program_options::notify(vm);
+
+    if(vm.count("help"))
+    {
+        std::cout << desc << std::endl;
+        return 0;
+    }
+
+    std::cout << "Weak threshold: " << weak_threshold << std::endl;
+    std::cout << "Strong threshold: " << strong_threshold << std::endl;
+    std::cout << "Number of features: " << num_features << std::endl;
+    std::cout << "Create templates? " << create_templates << std::endl;
+
+    jabil_read_all_templates_and_match(weak_threshold, strong_threshold, num_features, create_templates);
+
     return 0;
 }
