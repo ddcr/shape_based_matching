@@ -459,6 +459,7 @@ void jabil_create_templates(line2Dup::Detector detector)
     for (auto const& fm: file_map)
     {
         std::string class_id = fm.first;
+        int fid_id = 1;
         for (auto const& f: fm.second)
         {
             cv::Mat fiducial_img = cv::imread(f);
@@ -482,7 +483,8 @@ void jabil_create_templates(line2Dup::Detector detector)
                     class_id,
                     fid_shapes.mask_of(info),
                     info.scale,
-                    info.angle
+                    info.angle,
+                    fid_id
                 );
                 // if (templ_id != -1)
                 // {
@@ -490,6 +492,7 @@ void jabil_create_templates(line2Dup::Detector detector)
                 // }
             }
             // fid_shapes.save_infos(infos_have_templ, f + ".info.yaml");
+            fid_id++;
         }
 
         std::cout << "Writing templates ...";
@@ -499,7 +502,7 @@ void jabil_create_templates(line2Dup::Detector detector)
 }
 
 void jabil_read_all_templates_and_match(
-    float weak_thresh, float strong_thresh, int num_feat, bool create_template
+    std::string testdir, float weak_thresh, float strong_thresh, int num_feat, bool create_template
 )
 {
     line2Dup::Detector detector(num_feat, {4, 8}, weak_thresh, strong_thresh);
@@ -539,7 +542,7 @@ void jabil_read_all_templates_and_match(
     // Take time of matching for one image
     // read test images
     const std::experimental::filesystem::path path_test_images{ 
-        PREFIX_PATH + "/inspection_images/2023-07-27/JabilCam-modelos/tag_candidate/VIKING" 
+        PREFIX_PATH + "/inspection_images/2023-07-27/JabilCam-modelos/tag_candidate/" + testdir 
     };
 
     std::vector<std::experimental::filesystem::path> filelist;
@@ -550,6 +553,7 @@ void jabil_read_all_templates_and_match(
 
     for (auto &f: filelist)
     {
+        std::cout << "===========================================================================================" << std::endl;
         std::cout << f.filename() << std::endl;
 
         Mat img_orig = imread(f.string());
@@ -563,18 +567,10 @@ void jabil_read_all_templates_and_match(
 
         Timer timer;
         auto matches = detector.match(img, 90, class_ids);
-        timer.out();
+        timer.out("[match]");
         std::cout << "matches.size(): " << matches.size() << std::endl;
 
-        if (!(matches.size() > 0))
-        {
-            //  Add a mark
-            cv::Mat cross_img(img.rows, img.cols, CV_8UC3, cv::Scalar(0, 0, 0));
-            cv::line(cross_img, cv::Point(0, 0), cv::Point(img.rows, img.cols), cv::Scalar(0, 0, 255), 2);
-            cv::line(cross_img, cv::Point(img.rows, 0), cv::Point(0, img.cols), cv::Scalar(0, 0, 255), 2);
-            cv::addWeighted(img, 1, cross_img, 1, 0, img);
-        }
-
+        // ======================================= NMS =======================================
         // Use NMS to filter overlapping boxes of different scales but similar score
         std::vector<cv::Rect> boxes;
         std::vector<float> scores;
@@ -592,15 +588,22 @@ void jabil_read_all_templates_and_match(
             scores.push_back(match.similarity);
         }
         cv_dnn::NMSBoxes(boxes, scores, 0, 0.5f, indices);
+        // cv_dnn::NMSBoxes(boxes, scores, 0, 0.8f, indices, 1.0, 2);
+        // ======================================= NMS =======================================
 
+        int m_loop = 1;
         for (auto idx: indices)
         {
             auto match = matches[idx];
             auto templ = detector.getTemplates(match.class_id, match.template_id);
 
+            // templ[0] == base of pyramid
             int x = templ[0].width + match.x;
             int y = templ[0].height + match.y;
             int r = templ[0].width/2;
+            
+            // cv::Vec3b randColor = {rand()%155+100, rand()%155+100, rand()%155+100};
+            cv::Vec3b randColor = {255, 0, 0};
 
             for(int i = 0; i < templ[0].features.size(); i++){
                 auto feat = templ[0].features[i];
@@ -608,40 +611,41 @@ void jabil_read_all_templates_and_match(
                     img,
                     {feat.x + match.x, feat.y + match.y},
                     2,
-                    {150, 0, 150},
+                    randColor,
                     -1
                 );
             }
 
-            // Title
-            int baseline = 0;
-            cv::Size textSize = cv::getTextSize(match.class_id, cv::FONT_HERSHEY_PLAIN, 1.0, 2, &baseline);
-            int xt = (img.cols - textSize.width) / 2; // Centered horizontally
-            int yt = textSize.height + 10; // 10 pixels below the top edge
-            cv::putText(
-                img,
-                match.class_id,
-                cv::Point(xt, yt),
-                cv::FONT_HERSHEY_PLAIN,
-                2,
-                {150, 0, 150}
-            );
+            //    Legend
+            std::stringstream legend_t, sscale_t;
+            sscale_t.precision(2);
+            sscale_t << templ[0].sscale;
+            legend_t << "Box " << to_string(match.template_id) << " : "
+                     << "[" << match.class_id << "/" << "Fid" << templ[0].fid_id << "], "
+                     << "(" << int(templ[0].orientation) << ", " << sscale_t.str() << "), sim="
+                     << to_string(int(round(match.similarity)));
+            std::cout << legend_t.str() << std::endl;
 
+            // int thickness = 2;
+            // double fontscale = 1.8;
+            // int baseline = 0;
+            // cv::Size textSize = cv::getTextSize(legend_t.str(), cv::FONT_HERSHEY_PLAIN, fontscale, thickness, &baseline);
+            // int xt = (img.cols - textSize.width) / 2; // Centered horizontally
+            // int yt = m_loop * (textSize.height + 30); // 20 pixels below the top edge
+            // cv::putText(
+            //     img,
+            //     legend_t.str(), cv::Point(xt, yt),
+            //     cv::FONT_HERSHEY_PLAIN, fontscale, randColor, thickness
+            // );
+
+            // Box
+            cv::rectangle(img, {match.x, match.y}, {x, y}, randColor, 2);
             cv::putText(
                 img,
-                to_string(int(round(match.similarity))),
-                cv::Point(match.x + r -10, match.y - 3),
-                cv::FONT_HERSHEY_PLAIN,
-                2,
-                {150, 0, 150}
+                to_string(match.template_id), cv::Point(match.x+r-10, match.y-3),
+                cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
             );
-            cv::rectangle(
-                img,
-                {match.x, match.y},
-                {x, y},
-                {150, 0, 150},
-                2
-            );
+            m_loop++;
         }
 
         cv::imshow("", img);
@@ -679,11 +683,19 @@ int main(int argc, const char** argv){
             boost::program_options::value<bool>(&create_templates)->default_value(false),
             "Create templates?"
         )
+        (
+            "testdir,t",
+            boost::program_options::value<std::string>(),
+            "Test directory"
+        )
         ("help,h", "Print usage information");
+
+    boost::program_options::positional_options_description pdesc;
+    pdesc.add("testdir", 1);
 
     // parse options
     boost::program_options::variables_map vm;
-    boost::program_options::store(boost::program_options::parse_command_line(argc, argv, desc), vm);
+    boost::program_options::store(boost::program_options::command_line_parser(argc, argv).options(desc).positional(pdesc).run(), vm);
     boost::program_options::notify(vm);
 
     if(vm.count("help"))
@@ -692,12 +704,19 @@ int main(int argc, const char** argv){
         return 0;
     }
 
+    std::string testdir = "VIKING";
+    if(vm.count("testdir"))
+    {
+        testdir = vm["testdir"].as<std::string>();
+    }
+
     std::cout << "Weak threshold: " << weak_threshold << std::endl;
     std::cout << "Strong threshold: " << strong_threshold << std::endl;
     std::cout << "Number of features: " << num_features << std::endl;
     std::cout << "Create templates? " << create_templates << std::endl;
+    std::cout << "Test directory: " << testdir << std::endl;
 
-    jabil_read_all_templates_and_match(weak_threshold, strong_threshold, num_features, create_templates);
+    jabil_read_all_templates_and_match(testdir, weak_threshold, strong_threshold, num_features, create_templates);
 
     return 0;
 }

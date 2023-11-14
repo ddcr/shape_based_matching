@@ -39,7 +39,7 @@ struct Template
 
     float sscale;
     float orientation;
-    // std::string fid_img;
+    int fid_id;
 
     void read(const cv::FileNode &fn);
     void write(cv::FileStorage &fs) const;
@@ -166,6 +166,7 @@ public:
                     const cv::Mat &object_mask,
                     float sscale = -1.0,
                     float orientation = -1.0,
+                    int fid_id = -1,
                     int num_features = 0);
 
     int addTemplate_rotate(const std::string &class_id, int zero_id, float theta, cv::Point2f center);
