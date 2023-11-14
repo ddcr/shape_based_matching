@@ -473,6 +473,8 @@ void jabil_create_templates(line2Dup::Detector detector)
             fid_shapes.scale_step = 0.1;
             fid_shapes.produce_infos();
 
+            // ddcr: write info directly in template yaml file
+            // std::vector<shape_based_matching::shapeInfo_producer::Info> infos_have_templ;
             for (auto& info: fid_shapes.infos)
             {
                 int templ_id = detector.addTemplate(
@@ -482,7 +484,12 @@ void jabil_create_templates(line2Dup::Detector detector)
                     info.scale,
                     info.angle
                 );
+                // if (templ_id != -1)
+                // {
+                //     infos_have_templ.push_back(info);
+                // }
             }
+            // fid_shapes.save_infos(infos_have_templ, f + ".info.yaml");
         }
 
         std::cout << "Writing templates ...";
@@ -521,7 +528,6 @@ void jabil_read_all_templates_and_match(
     }
     std::cout << " done!" << std::endl;
 
-#if 0
     detector.readClasses(class_ids, template_path.string() + "/%s_templ.yaml.gz");
     std::cout << detector.numClasses() << std::endl;
     for (auto const& class_id: detector.classIds())
@@ -629,9 +635,7 @@ void jabil_read_all_templates_and_match(
                 2,
                 {150, 0, 150}
             );
-            cv::rectangle(// TODO: ddcr remove od add static as needed
-// void computeResponseMaps(const Mat &src, std::vector<Mat> &response_maps)
-
+            cv::rectangle(
                 img,
                 {match.x, match.y},
                 {x, y},
@@ -643,7 +647,6 @@ void jabil_read_all_templates_and_match(
         cv::imshow("", img);
         cv::waitKey(0);
     }
-#endif
 }
 
 int main(int argc, const char** argv){
