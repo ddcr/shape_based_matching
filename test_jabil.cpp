@@ -37,7 +37,7 @@ public:
     void out(std::string message = ""){
         double t = elapsed();
         // std::cout << message << "\nelasped time:" << t << "s" << std::endl;
-        std::cout << message << "\nelapsed time:" << t << " ms" << std::endl;
+        std::cout << message << " >>> elapsed time: " << t << " ms" << std::endl;
         reset();
     }
 private:
@@ -459,18 +459,29 @@ void jabil_create_templates(line2Dup::Detector detector)
     for (auto const& fm: file_map)
     {
         std::string class_id = fm.first;
-        int fid_id = 1;
         for (auto const& f: fm.second)
         {
             cv::Mat fiducial_img = cv::imread(f);
             assert(!fiducial_img.empty() && "check your img path");
 
+            std::experimental::filesystem::path f_path(f);
+            std::string fiducial_src = f_path.filename();
+
             // ONLY ALLOW MULTIPLES OF 90 DEGREES
             shape_based_matching::shapeInfo_producer fid_shapes(fiducial_img, cv::Mat());
+
+            if (0)
+            {
+                // create mask
+                cv::Mat fiducial_mask = cv::Mat(fiducial_img.size(), CV_8UC1, {255});
+                shape_based_matching::shapeInfo_producer fid_shapes(fiducial_img, fiducial_mask);
+            }
+
             fid_shapes.angle_range = {0, 270};
             fid_shapes.angle_step = 90;
 
-            fid_shapes.scale_range = {0.8, 1.2};
+            fid_shapes.scale_range = {0.9, 1.1};
+            // fid_shapes.scale_range = {0.8, 1.2};
             fid_shapes.scale_step = 0.1;
             fid_shapes.produce_infos();
 
@@ -484,7 +495,7 @@ void jabil_create_templates(line2Dup::Detector detector)
                     fid_shapes.mask_of(info),
                     info.scale,
                     info.angle,
-                    fid_id
+                    fiducial_src
                 );
                 // if (templ_id != -1)
                 // {
@@ -492,7 +503,6 @@ void jabil_create_templates(line2Dup::Detector detector)
                 // }
             }
             // fid_shapes.save_infos(infos_have_templ, f + ".info.yaml");
-            fid_id++;
         }
 
         std::cout << "Writing templates ...";
@@ -556,7 +566,7 @@ void jabil_read_all_templates_and_match(
         std::cout << "===========================================================================================" << std::endl;
         std::cout << f.filename() << std::endl;
 
-        Mat img_orig = imread(f.string());
+        cv::Mat img_orig = imread(f.string());
         assert(!img_orig.empty() && "check your img path");
 
         int stride = 16;
@@ -565,11 +575,12 @@ void jabil_read_all_templates_and_match(
         Rect roi(0, 0, stride*m , stride*n);
         Mat img = img_orig(roi).clone();
 
-        Timer timer;
+        Timer timer_match;
         auto matches = detector.match(img, 90, class_ids);
-        timer.out("[match]");
+        timer_match.out("[detector match]");
         std::cout << "matches.size(): " << matches.size() << std::endl;
 
+        Timer timer_filter;
         // ======================================= NMS =======================================
         // Use NMS to filter overlapping boxes of different scales but similar score
         std::vector<cv::Rect> boxes;
@@ -596,7 +607,28 @@ void jabil_read_all_templates_and_match(
         {
             auto match = matches[idx];
             auto templ = detector.getTemplates(match.class_id, match.template_id);
+#if 1            
+            // NEED TO FILTER THE FALSE POSITIVES
+            // 1. Use template matching
+            // 1.1 Extract the desired region from the query image using the template size.
+            cv::Rect templ_roi = cv::Rect(match.x, match.y, templ[0].width, templ[0].height);
+            cv::Mat img_cropped = img(templ_roi);
+            cv::Mat img_cropped_gray;
+            cv::cvtColor(img_cropped, img_cropped_gray, cv::COLOR_BGR2GRAY);
 
+            // 1.2 Read fiducial image
+            std::experimental::filesystem::path fiducial_path;
+            std::experimental::filesystem::path fiducial_src_p(templ[0].fiducial_src);
+            fiducial_path = template_path / fiducial_src_p;
+            cv::Mat img_fid_gray = cv::imread(fiducial_path.string(), cv::IMREAD_GRAYSCALE);
+            if (!img_fid_gray.empty())
+            {
+                cv::imshow(to_string(m_loop), img_fid_gray);
+                cv::waitKey(0);
+            }
+#endif
+
+#if 0
             // templ[0] == base of pyramid
             int x = templ[0].width + match.x;
             int y = templ[0].height + match.y;
@@ -621,23 +653,24 @@ void jabil_read_all_templates_and_match(
             sscale_t.precision(2);
             sscale_t << templ[0].sscale;
             legend_t << "Box " << to_string(match.template_id) << " : "
-                     << "[" << match.class_id << "/" << "Fid" << templ[0].fid_id << "], "
+                     << "[" << templ[0].fiducial_src << "], "
                      << "(" << int(templ[0].orientation) << ", " << sscale_t.str() << "), sim="
                      << to_string(int(round(match.similarity)));
             std::cout << legend_t.str() << std::endl;
 
-            // int thickness = 2;
-            // double fontscale = 1.8;
-            // int baseline = 0;
-            // cv::Size textSize = cv::getTextSize(legend_t.str(), cv::FONT_HERSHEY_PLAIN, fontscale, thickness, &baseline);
-            // int xt = (img.cols - textSize.width) / 2; // Centered horizontally
-            // int yt = m_loop * (textSize.height + 30); // 20 pixels below the top edge
-            // cv::putText(
-            //     img,
-            //     legend_t.str(), cv::Point(xt, yt),
-            //     cv::FONT_HERSHEY_PLAIN, fontscale, randColor, thickness
-            // );
-
+#if defined(INFO_ON_IMAGE)
+            int thickness = 2;
+            double fontscale = 1.8;
+            int baseline = 0;
+            cv::Size textSize = cv::getTextSize(legend_t.str(), cv::FONT_HERSHEY_PLAIN, fontscale, thickness, &baseline);
+            int xt = (img.cols - textSize.width) / 2; // Centered horizontally
+            int yt = m_loop * (textSize.height + 30); // 20 pixels below the top edge
+            cv::putText(
+                img,
+                legend_t.str(), cv::Point(xt, yt),
+                cv::FONT_HERSHEY_PLAIN, fontscale, randColor, thickness
+            );
+#endif
             // Box
             cv::rectangle(img, {match.x, match.y}, {x, y}, randColor, 2);
             cv::putText(
@@ -645,8 +678,10 @@ void jabil_read_all_templates_and_match(
                 to_string(match.template_id), cv::Point(match.x+r-10, match.y-3),
                 cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
             );
+#endif
             m_loop++;
         }
+        timer_filter.out("[post-process matches]");
 
         cv::imshow("", img);
         cv::waitKey(0);
@@ -701,6 +736,7 @@ int main(int argc, const char** argv){
     if(vm.count("help"))
     {
         std::cout << desc << std::endl;
+        std::cout << cv::getBuildInformation() << std::endl;
         return 0;
     }
 

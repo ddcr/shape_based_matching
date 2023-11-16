@@ -77,7 +77,7 @@ void Template::read(const FileNode &fn)
 
     sscale = fn["scale"];
     orientation = fn["orientation"];
-    fid_id = fn["fid_id"];
+    fn["fiducial_src"] >> fiducial_src;
 
     pyramid_level = fn["pyramid_level"];
 
@@ -99,7 +99,7 @@ void Template::write(FileStorage &fs) const
 
     fs << "scale" << sscale;
     fs << "orientation" << orientation;
-    fs << "fid_id" << fid_id;
+    fs << "fiducial_src" << fiducial_src;
 
     fs << "pyramid_level" << pyramid_level;
 
@@ -1283,7 +1283,7 @@ int Detector::addTemplate(const Mat source, const std::string &class_id,
                           const Mat &object_mask,
                           float sscale,
                           float orientation,
-                          int fid_id,
+                          std::string fiducial_src,
                           int num_features)
 {
     std::vector<TemplatePyramid> &template_pyramids = class_templates[class_id];
@@ -1308,7 +1308,7 @@ int Detector::addTemplate(const Mat source, const std::string &class_id,
             bool success = qp->extractTemplate(tp[l]);
             tp[l].sscale = sscale;
             tp[l].orientation = orientation;
-            tp[l].fid_id = fid_id;
+            tp[l].fiducial_src = fiducial_src;
             if (!success)
                 return -1;
         }
