@@ -5,7 +5,7 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <map>
 
-#define ANGLE_TOLERANCE 0.0000001
+#define ANGLE_TOLERANCE FLT_EPSILON
 #define ANGLE_MULTIPLE_90 0
 
 #include "mipp.h"  // for SIMD in different platforms

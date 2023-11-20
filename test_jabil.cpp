@@ -175,6 +175,40 @@ return color;
 
 /* ================================================================================================== */
 
+cv::Mat extractFiducialImg(
+    const std::map<std::string,cv::Mat>& matched_fiducials,
+    const line2Dup::Template& templ
+)
+{
+    cv::Mat dst;
+
+    cv::Mat src = matched_fiducials.at(templ.fiducial_src).clone();
+    float angle = templ.orientation;
+
+    if (std::abs(angle - 90.0) < ANGLE_TOLERANCE)
+    {
+        cv::rotate(src, dst, cv::ROTATE_90_CLOCKWISE);
+    }
+    else if (std::abs(angle - 180.0) < ANGLE_TOLERANCE)
+    {
+        cv::rotate(src, dst, cv::ROTATE_180);
+    }
+    else if (std::abs(angle - 270.0) < ANGLE_TOLERANCE)
+    {
+        cv::rotate(src, dst, cv::ROTATE_90_COUNTERCLOCKWISE);
+    }
+    else
+    {
+        src.copyTo(dst);
+    }
+
+    if (std::abs(templ.sscale-1.0) > FLT_EPSILON)
+    {
+        cv::resize(dst, dst, cv::Size(), templ.sscale, templ.sscale);
+    }
+    return dst;
+}
+
 void jabil_test1()
 {
     int num_feature = 150;
@@ -563,12 +597,16 @@ void jabil_read_all_templates_and_match(
 
     for (auto &f: filelist)
     {
+        Timer timer_wall;
+
         std::cout << "===========================================================================================" << std::endl;
         std::cout << f.filename() << std::endl;
 
         cv::Mat img_orig = imread(f.string());
         assert(!img_orig.empty() && "check your img path");
 
+        // compatibility wth line2Dup::computeResponseMaps()
+        // make the img having 16*n width & height
         int stride = 16;
         int n = img_orig.rows/stride;
         int m = img_orig.cols/stride;
@@ -602,33 +640,64 @@ void jabil_read_all_templates_and_match(
         // cv_dnn::NMSBoxes(boxes, scores, 0, 0.8f, indices, 1.0, 2);
         // ======================================= NMS =======================================
 
-        int m_loop = 1;
+        // First pass: extract fiducial images 
+        std::map<std::string, cv::Mat> matched_fiducials;
         for (auto idx: indices)
         {
             auto match = matches[idx];
             auto templ = detector.getTemplates(match.class_id, match.template_id);
-#if 1            
-            // NEED TO FILTER THE FALSE POSITIVES
-            // 1. Use template matching
-            // 1.1 Extract the desired region from the query image using the template size.
-            cv::Rect templ_roi = cv::Rect(match.x, match.y, templ[0].width, templ[0].height);
-            cv::Mat img_cropped = img(templ_roi);
-            cv::Mat img_cropped_gray;
-            cv::cvtColor(img_cropped, img_cropped_gray, cv::COLOR_BGR2GRAY);
-
-            // 1.2 Read fiducial image
             std::experimental::filesystem::path fiducial_path;
             std::experimental::filesystem::path fiducial_src_p(templ[0].fiducial_src);
             fiducial_path = template_path / fiducial_src_p;
             cv::Mat img_fid_gray = cv::imread(fiducial_path.string(), cv::IMREAD_GRAYSCALE);
-            if (!img_fid_gray.empty())
-            {
-                cv::imshow(to_string(m_loop), img_fid_gray);
-                cv::waitKey(0);
-            }
-#endif
+            matched_fiducials[templ[0].fiducial_src] = img_fid_gray;
+        }
+        
+        // Second pass: to filtering
+        cv::Mat img_show = img_orig(roi).clone();
+        for (auto idx: indices)
+        {
+            auto match = matches[idx];
+            auto templ = detector.getTemplates(match.class_id, match.template_id);
 
-#if 0
+            // NEED TO FILTER THE FALSE POSITIVES
+            // 1. Use template matching
+            // 1.1 Extract matched ROI
+            cv::Rect templ_roi = cv::Rect(match.x, match.y, templ[0].width, templ[0].height);
+            cv::Mat img_roi = img(templ_roi).clone();
+            cv::Mat img_roi_gray;
+            cv::cvtColor(img_roi, img_roi_gray, cv::COLOR_BGR2GRAY);
+
+            // 1.2 extract fiducial
+            cv::Mat img_fiducial = extractFiducialImg(matched_fiducials, templ[0]);
+
+            // ==== SHOW ROI AND FIDUCIAL SIDE BY SIDE ====
+            cv::Mat frame;
+            std::vector<cv::Mat> images = {img_roi_gray, img_fiducial};
+            int max_height = std::max(img_roi_gray.rows, img_fiducial.rows);
+            int padding = 5;
+
+            for (const cv::Mat& img : images)
+            {
+                int top = 0, bottom = 0;
+                if (img.rows < max_height)
+                {
+                    top = (max_height - img.rows) / 2;
+                    bottom = max_height - img.rows - top;
+                }
+                cv::Mat padded_img;
+                cv::copyMakeBorder(img, padded_img, top + padding, bottom + padding,
+                    padding, padding, cv::BORDER_CONSTANT);
+                if (frame.empty())
+                    frame = padded_img;
+                else cv::hconcat(frame, padded_img, frame);
+            }
+
+            cv::imshow(to_string(match.template_id), frame);
+            cv::waitKey(0);
+            // ==== SHOW ROI AND FIDUCIAL SIDE BY SIDE ====
+
+#if 1
             // templ[0] == base of pyramid
             int x = templ[0].width + match.x;
             int y = templ[0].height + match.y;
@@ -640,7 +709,7 @@ void jabil_read_all_templates_and_match(
             for(int i = 0; i < templ[0].features.size(); i++){
                 auto feat = templ[0].features[i];
                 cv::circle(
-                    img,
+                    img_show,
                     {feat.x + match.x, feat.y + match.y},
                     2,
                     randColor,
@@ -655,36 +724,30 @@ void jabil_read_all_templates_and_match(
             legend_t << "Box " << to_string(match.template_id) << " : "
                      << "[" << templ[0].fiducial_src << "], "
                      << "(" << int(templ[0].orientation) << ", " << sscale_t.str() << "), sim="
-                     << to_string(int(round(match.similarity)));
+                     << to_string(int(round(match.similarity)))
+                     << "..."
+                     << templ_roi
+                     << " -- "
+                     << img_fiducial.size();
+
             std::cout << legend_t.str() << std::endl;
 
-#if defined(INFO_ON_IMAGE)
-            int thickness = 2;
-            double fontscale = 1.8;
-            int baseline = 0;
-            cv::Size textSize = cv::getTextSize(legend_t.str(), cv::FONT_HERSHEY_PLAIN, fontscale, thickness, &baseline);
-            int xt = (img.cols - textSize.width) / 2; // Centered horizontally
-            int yt = m_loop * (textSize.height + 30); // 20 pixels below the top edge
-            cv::putText(
-                img,
-                legend_t.str(), cv::Point(xt, yt),
-                cv::FONT_HERSHEY_PLAIN, fontscale, randColor, thickness
-            );
-#endif
             // Box
-            cv::rectangle(img, {match.x, match.y}, {x, y}, randColor, 2);
+            cv::rectangle(img_show, {match.x, match.y}, {x, y}, randColor, 2);
             cv::putText(
-                img,
+                img_show,
                 to_string(match.template_id), cv::Point(match.x+r-10, match.y-3),
                 cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
             );
 #endif
-            m_loop++;
         }
-        timer_filter.out("[post-process matches]");
-
-        cv::imshow("", img);
+        timer_filter.out("[post-process match filtering]");
+#if 1
+        cv::imshow("Image with matches", img_show);
         cv::waitKey(0);
+        cv::destroyAllWindows();
+#endif
+        timer_wall.out("File processing");
     }
 }
 
@@ -736,7 +799,7 @@ int main(int argc, const char** argv){
     if(vm.count("help"))
     {
         std::cout << desc << std::endl;
-        std::cout << cv::getBuildInformation() << std::endl;
+        // std::cout << cv::getBuildInformation() << std::endl;
         return 0;
     }
 
