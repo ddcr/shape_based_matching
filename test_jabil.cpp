@@ -25,6 +25,26 @@ int DEF_NUM_FEATURE = 150;
 float DEF_WEAK_THRESHOLD = 235.0f;
 float DEF_STRONG_THRESHOLD = 240.0f;
 
+std::map<std::string,std::string> map_models = {
+    {"2_1688586489", "EXAR"},
+    {"3_1688650244", "TAIYO YUNDEN"},
+    {"4_1688651426", "SAMSUNG"},
+    {"5_1688652122", "YAGEO"},
+    {"6_1688652831", "HILISIN"},
+    {"7_1688653607", "WALSIN SINCERA"},
+    {"8_1688654280", "AMAZING"},
+    {"9_1688655019", "LRC"},
+    {"10_1688655560", "DARFON"},
+    {"11_1688656382", "MURATA"},
+    {"12_1688659851", "WALSIN"},
+    {"13_1688661142", "VIKING"},
+    {"14_1688661964", "LITEON"},
+    {"15_1688663919", "VISHAY"},
+    {"16_1688765210", "DARFON_02"},
+    {"19_1689171468", "JOHANSON"},
+    {"20_1689179930", "MICROCHIP"},
+    {"21_1689693018", "HILSIN_02"}
+};
 
 class Timer
 {
@@ -48,136 +68,146 @@ private:
 };
 // NMS, got from cv::dnn so we don't need opencv contrib
 // just collapse it
-namespace  cv_dnn {
-namespace
+namespace  cv_dnn
 {
-
-template <typename T>
-static inline bool SortScorePairDescend(const std::pair<float, T>& pair1,
-                          const std::pair<float, T>& pair2)
-{
-    return pair1.first > pair2.first;
-}
-
-} // namespace
-
-inline void GetMaxScoreIndex(const std::vector<float>& scores, const float threshold, const int top_k,
-                      std::vector<std::pair<float, int> >& score_index_vec)
-{
-    for (size_t i = 0; i < scores.size(); ++i)
+    namespace
     {
-        if (scores[i] > threshold)
+        template <typename T>
+        static inline bool SortScorePairDescend(const std::pair<float, T>& pair1,
+                                const std::pair<float, T>& pair2)
         {
-            score_index_vec.push_back(std::make_pair(scores[i], i));
+            return pair1.first > pair2.first;
+        }
+    } // namespace
+
+    inline void GetMaxScoreIndex(const std::vector<float>& scores, const float threshold, const int top_k,
+                        std::vector<std::pair<float, int> >& score_index_vec)
+    {
+        for (size_t i = 0; i < scores.size(); ++i)
+        {
+            if (scores[i] > threshold)
+            {
+                score_index_vec.push_back(std::make_pair(scores[i], i));
+            }
+        }
+        std::stable_sort(score_index_vec.begin(), score_index_vec.end(),
+                        SortScorePairDescend<int>);
+        if (top_k > 0 && top_k < (int)score_index_vec.size())
+        {
+            score_index_vec.resize(top_k);
         }
     }
-    std::stable_sort(score_index_vec.begin(), score_index_vec.end(),
-                     SortScorePairDescend<int>);
-    if (top_k > 0 && top_k < (int)score_index_vec.size())
+
+    template <typename BoxType>
+    inline void NMSFast_(const std::vector<BoxType>& bboxes,
+        const std::vector<float>& scores, const float score_threshold,
+        const float nms_threshold, const float eta, const int top_k,
+        std::vector<int>& indices, float (*computeOverlap)(const BoxType&, const BoxType&))
     {
-        score_index_vec.resize(top_k);
-    }
-}
+        CV_Assert(bboxes.size() == scores.size());
+        std::vector<std::pair<float, int> > score_index_vec;
+        GetMaxScoreIndex(scores, score_threshold, top_k, score_index_vec);
 
-template <typename BoxType>
-inline void NMSFast_(const std::vector<BoxType>& bboxes,
-      const std::vector<float>& scores, const float score_threshold,
-      const float nms_threshold, const float eta, const int top_k,
-      std::vector<int>& indices, float (*computeOverlap)(const BoxType&, const BoxType&))
-{
-    CV_Assert(bboxes.size() == scores.size());
-    std::vector<std::pair<float, int> > score_index_vec;
-    GetMaxScoreIndex(scores, score_threshold, top_k, score_index_vec);
-
-    // Do nms.
-    float adaptive_threshold = nms_threshold;
-    indices.clear();
-    for (size_t i = 0; i < score_index_vec.size(); ++i) {
-        const int idx = score_index_vec[i].second;
-        bool keep = true;
-        for (int k = 0; k < (int)indices.size() && keep; ++k) {
-            const int kept_idx = indices[k];
-            float overlap = computeOverlap(bboxes[idx], bboxes[kept_idx]);
-            keep = overlap <= adaptive_threshold;
-        }
-        if (keep)
-            indices.push_back(idx);
-        if (keep && eta < 1 && adaptive_threshold > 0.5) {
-          adaptive_threshold *= eta;
+        // Do nms.
+        float adaptive_threshold = nms_threshold;
+        indices.clear();
+        for (size_t i = 0; i < score_index_vec.size(); ++i) {
+            const int idx = score_index_vec[i].second;
+            bool keep = true;
+            for (int k = 0; k < (int)indices.size() && keep; ++k) {
+                const int kept_idx = indices[k];
+                float overlap = computeOverlap(bboxes[idx], bboxes[kept_idx]);
+                keep = overlap <= adaptive_threshold;
+            }
+            if (keep)
+                indices.push_back(idx);
+            if (keep && eta < 1 && adaptive_threshold > 0.5) {
+            adaptive_threshold *= eta;
+            }
         }
     }
-}
 
 
-// copied from opencv 3.4, not exist in 3.0
-template<typename _Tp> static inline
-double jaccardDistance__(const Rect_<_Tp>& a, const Rect_<_Tp>& b) {
-    _Tp Aa = a.area();
-    _Tp Ab = b.area();
+    // copied from opencv 3.4, not exist in 3.0
+    template<typename _Tp> static inline
+    double jaccardDistance__(const Rect_<_Tp>& a, const Rect_<_Tp>& b) {
+        _Tp Aa = a.area();
+        _Tp Ab = b.area();
 
-    if ((Aa + Ab) <= std::numeric_limits<_Tp>::epsilon()) {
-        // jaccard_index = 1 -> distance = 0
-        return 0.0;
+        if ((Aa + Ab) <= std::numeric_limits<_Tp>::epsilon()) {
+            // jaccard_index = 1 -> distance = 0
+            return 0.0;
+        }
+
+        double Aab = (a & b).area();
+        // distance = 1 - jaccard_index
+        return 1.0 - Aab / (Aa + Ab - Aab);
     }
 
-    double Aab = (a & b).area();
-    // distance = 1 - jaccard_index
-    return 1.0 - Aab / (Aa + Ab - Aab);
-}
-
-template <typename T>
-static inline float rectOverlap(const T& a, const T& b)
-{
-    return 1.f - static_cast<float>(jaccardDistance__(a, b));
-}
-
-void NMSBoxes(const std::vector<Rect>& bboxes, const std::vector<float>& scores,
-                          const float score_threshold, const float nms_threshold,
-                          std::vector<int>& indices, const float eta=1, const int top_k=0)
-{
-    NMSFast_(bboxes, scores, score_threshold, nms_threshold, eta, top_k, indices, rectOverlap);
-}
-
-}
-
-
-cv::Mat displayQuantized(const cv::Mat& quantized)
-{
-cv::Mat color(quantized.size(), CV_8UC3);
-for (int r = 0; r < quantized.rows; ++r)
-{
-    const uchar* quant_r = quantized.ptr(r);
-    cv::Vec3b* color_r = color.ptr<cv::Vec3b>(r);
-
-    for (int c = 0; c < quantized.cols; ++c)
+    template <typename T>
+    static inline float rectOverlap(const T& a, const T& b)
     {
-    cv::Vec3b& bgr = color_r[c];
-    switch (quant_r[c])
+        return 1.f - static_cast<float>(jaccardDistance__(a, b));
+    }
+
+    void NMSBoxes(const std::vector<Rect>& bboxes, const std::vector<float>& scores,
+                            const float score_threshold, const float nms_threshold,
+                            std::vector<int>& indices, const float eta=1, const int top_k=0)
     {
-        case 0:   bgr[0]=  0; bgr[1]=  0; bgr[2]=  0;    break;
-        case 1:   bgr[0]= 55; bgr[1]= 55; bgr[2]= 55;    break;
-        case 2:   bgr[0]= 80; bgr[1]= 80; bgr[2]= 80;    break;
-        case 4:   bgr[0]=105; bgr[1]=105; bgr[2]=105;    break;
-        case 8:   bgr[0]=130; bgr[1]=130; bgr[2]=130;    break;
-        case 16:  bgr[0]=155; bgr[1]=155; bgr[2]=155;    break;
-        case 32:  bgr[0]=180; bgr[1]=180; bgr[2]=180;    break;
-        case 64:  bgr[0]=205; bgr[1]=205; bgr[2]=205;    break;
-        case 128: bgr[0]=230; bgr[1]=230; bgr[2]=230;    break;
-        case 255: bgr[0]=  0; bgr[1]=  0; bgr[2]=255;    break;
-        default:  bgr[0]=  0; bgr[1]=255; bgr[2]=  0;    break;
-    }
+        NMSFast_(bboxes, scores, score_threshold, nms_threshold, eta, top_k, indices, rectOverlap);
     }
 }
 
-return color;
+static inline int myGetLabel(int quantized)
+{
+  switch (quantized)
+  {
+    case 1:   return 0;
+    case 2:   return 1;
+    case 4:   return 2;
+    case 8:   return 3;
+    case 16:  return 4;
+    case 32:  return 5;
+    case 64:  return 6;
+    case 128: return 7;
+    default:
+      CV_Error(Error::StsBadArg, "Invalid value of quantized parameter");
+  }
 }
 
+cv::Mat displayQuantized(const Mat& quantized)
+{
+    std::vector<Vec3b> lut(8);
+    lut[0] = Vec3b(  0,   0, 255);
+    lut[1] = Vec3b(  0, 170, 255);
+    lut[2] = Vec3b(  0, 255, 170);
+    lut[3] = Vec3b(  0, 255,   0);
+    lut[4] = Vec3b(170, 255,   0);
+    lut[5] = Vec3b(255, 170,   0);
+    lut[6] = Vec3b(255,   0,   0);
+    lut[7] = Vec3b(255,   0, 170);
+
+    cv::Mat dst = Mat::zeros(quantized.size(), CV_8UC3);
+    for (int r = 0; r < dst.rows; ++r)
+    {
+        const uchar* quant_r = quantized.ptr(r);
+        Vec3b* dst_r = dst.ptr<Vec3b>(r);
+        for (int c = 0; c < dst.cols; ++c)
+        {
+        uchar q = quant_r[c];
+        if (q)
+            dst_r[c] = lut[myGetLabel(q)];
+        }
+    }
+    return dst;
+}
 
 /* ================================================================================================== */
 
 cv::Mat extractFiducialImg(
     const std::map<std::string,cv::Mat>& matched_fiducials,
-    const line2Dup::Template& templ
+    const line2Dup::Template& templ,
+    bool addTitle = true
 )
 {
     cv::Mat dst;
@@ -206,7 +236,143 @@ cv::Mat extractFiducialImg(
     {
         cv::resize(dst, dst, cv::Size(), templ.sscale, templ.sscale);
     }
+
+    if (addTitle)
+    {
+        std::string fiducial_src = templ.fiducial_src;
+        std::string fiducial_substr = fiducial_src.substr(0, fiducial_src.find('.'));
+        std::string modelName = map_models.at(fiducial_substr);
+        cv::putText(dst, modelName, cv::Point(0, dst.rows/2), cv::FONT_HERSHEY_PLAIN, 1.0f, {0, 0, 0}, 2);
+    }
+
     return dst;
+}
+
+int showQuantization(const cv::Mat& img, line2Dup::Detector detector, std::string windowLabel="window")
+{
+    cv::Mat cimg = img.clone();
+    cv::resize(cimg, cimg, cv::Size(), 0.5f, 0.5f);
+
+    cv::Mat img_mag_norm, img_nq_norm, img_q_norm, cimg_gray_norm;
+    cv::Ptr<line2Dup::ColorGradientPyramid> colorGradientPyramid = detector.getModalities()->process(cimg, cv::Mat());
+    cv::Mat img_mag = colorGradientPyramid->magnitude;  // CV_32F
+    cv::Mat img_nq = colorGradientPyramid->angle_ori;   // CV_32F
+    cv::Mat img_q = colorGradientPyramid->angle;        // CV_8U
+
+    cv::normalize(img_mag, img_mag_norm, 0, 255, cv::NORM_MINMAX, CV_8U);
+    cv::normalize(img_nq, img_nq_norm, 0, 255, cv::NORM_MINMAX, CV_8U);
+
+    cv::applyColorMap(img_mag_norm, img_mag_norm, cv::COLORMAP_VIRIDIS);
+    cv::applyColorMap(img_nq_norm, img_nq_norm, cv::COLORMAP_VIRIDIS);
+
+    cv::Mat hconcat1, hconcat2, concatenated;
+    cv::hconcat(cimg, displayQuantized(img_q), hconcat1);
+    cv::hconcat(img_mag_norm, img_nq_norm, hconcat2);
+    cv::vconcat(hconcat1, hconcat2, concatenated);
+
+    cv::namedWindow(windowLabel, WINDOW_AUTOSIZE);
+    cv::moveWindow(windowLabel, 80, 50);
+    cv::imshow(windowLabel, concatenated);
+
+    return cv::waitKey(0);
+}
+
+int showMatchings(const cv::Mat& img, const std::vector<line2Dup::Match>& matches, const std::vector<int>& indices,
+    const std::map<std::string, cv::Mat>& matched_fiducials,
+    line2Dup::Detector detector, std::string windowLabel="window")
+{
+    cv::Mat img_show = img.clone();
+    int iWindow = 0;
+    int jWindow = 0;
+    for (auto idx: indices)
+    {
+        auto match = matches[idx];
+        auto templ = detector.getTemplates(match.class_id, match.template_id);
+
+        // 1.1 Extract matched ROI
+        cv::Rect templ_roi = cv::Rect(match.x, match.y, templ[0].width, templ[0].height);
+        cv::Mat img_roi = img(templ_roi).clone();
+        cv::Mat img_roi_gray;
+        cv::cvtColor(img_roi, img_roi_gray, cv::COLOR_BGR2GRAY);
+
+        // 1.2 extract fiducial with model name imprinted
+        cv::Mat img_fiducial = extractFiducialImg(matched_fiducials, templ[0]);
+
+        // ================================== SHOW ROI AND FIDUCIAL SIDE BY SIDE ==================================
+        cv::Mat frame;
+        std::vector<cv::Mat> images = {img_roi_gray, img_fiducial};
+        int max_height = std::max(img_roi_gray.rows, img_fiducial.rows);
+        int padding = 5;
+
+        for (const cv::Mat& img : images)
+        {
+            int top = 0, bottom = 0;
+            if (img.rows < max_height)
+            {
+                top = (max_height - img.rows) / 2;
+                bottom = max_height - img.rows - top;
+            }
+            cv::Mat padded_img;
+            cv::copyMakeBorder(img, padded_img, top + padding, bottom + padding,
+                padding, padding, cv::BORDER_CONSTANT);
+            if (frame.empty())
+                frame = padded_img;
+            else cv::hconcat(frame, padded_img, frame);
+        }
+
+        std::string windowId = to_string(match.template_id);
+        std::string windowIdTitle = "Box" + to_string(match.template_id) + "/" + to_string(int(round(match.similarity)));
+        cv::namedWindow(windowId, WINDOW_AUTOSIZE);
+        cv::moveWindow(windowId, (iWindow % 5)*350 + 80, (jWindow % 2)*160+50);
+        cv::setWindowTitle(windowId, windowIdTitle);
+        cv::imshow(windowId, frame);
+        // ================================== SHOW ROI AND FIDUCIAL SIDE BY SIDE ==================================
+
+        // templ[0] == base of pyramid
+        int x = templ[0].width + match.x;
+        int y = templ[0].height + match.y;
+        int r = templ[0].width/2;
+
+        // cv::Vec3b randColor = {rand()%155+100, rand()%155+100, rand()%155+100};
+        cv::Vec3b randColor = {255, 0, 0};
+
+        for(int i = 0; i < templ[0].features.size(); i++){
+            auto feat = templ[0].features[i];
+            cv::circle(img_show, {feat.x + match.x, feat.y + match.y}, 2, randColor, -1);
+        }
+
+        //  log to stdout
+        std::stringstream log_t, sscale_t;
+        sscale_t.precision(2);
+        sscale_t << templ[0].sscale;
+        log_t << "Box " << to_string(match.template_id) << " : "
+                << "[" << templ[0].fiducial_src << "], "
+                << "(" << int(templ[0].orientation) << ", " << sscale_t.str() << "), sim="
+                << to_string(int(round(match.similarity)))
+                << "..."
+                << templ_roi
+                << " -- "
+                << img_fiducial.size();
+        std::cout << log_t.str() << std::endl;
+
+        // Box
+        cv::rectangle(img_show, {match.x, match.y}, {x, y}, randColor, 2);
+        cv::putText(
+            img_show,
+            to_string(match.template_id), cv::Point(match.x+r-10, match.y-3),
+            cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
+        );
+
+        iWindow++;
+        if (((iWindow % 5) == 0))
+            jWindow++;
+    }
+
+    cv::namedWindow(windowLabel);
+    cv::moveWindow(windowLabel, 610, 250);
+    cv::imshow(windowLabel, img_show);
+
+    return cv::waitKey(0);
 }
 
 void jabil_test1()
@@ -225,8 +391,8 @@ void jabil_test1()
     else if (is_regular_file(path))
     {
         filelist.push_back(path);
-    } 
-    else 
+    }
+    else
     {
         std::cerr << "The folder/file specified was invalid!" << std::endl;
     }
@@ -458,7 +624,7 @@ void jabil_create_one_template()
                 auto feat = templ[0].features[i];
                 cv::circle(to_show, {feat.x+templ[0].tl_x, feat.y+templ[0].tl_y}, 3, {0, 0, 255}, -1);
             }
-            
+
             // will be faster if not showing this
             std::cout << "Angle: " << info.angle << ", Scale: " << info.scale << std::endl;
             imshow("train", to_show);
@@ -489,7 +655,7 @@ void jabil_create_templates(line2Dup::Detector detector)
             file_map[dir_entry.path().stem().stem()].push_back(dir_entry.path());
         }
     }
-    
+
     for (auto const& fm: file_map)
     {
         std::string class_id = fm.first;
@@ -524,7 +690,7 @@ void jabil_create_templates(line2Dup::Detector detector)
             for (auto& info: fid_shapes.infos)
             {
                 int templ_id = detector.addTemplate(
-                    fid_shapes.src_of(info), 
+                    fid_shapes.src_of(info),
                     class_id,
                     fid_shapes.mask_of(info),
                     info.scale,
@@ -585,8 +751,8 @@ void jabil_read_all_templates_and_match(
 
     // Take time of matching for one image
     // read test images
-    const std::experimental::filesystem::path path_test_images{ 
-        PREFIX_PATH + "/inspection_images/2023-07-27/JabilCam-modelos/tag_candidate/" + testdir 
+    const std::experimental::filesystem::path path_test_images{
+        PREFIX_PATH + "/inspection_images/2023-07-27/JabilCam-modelos/tag_candidate/" + testdir
     };
 
     std::vector<std::experimental::filesystem::path> filelist;
@@ -640,8 +806,8 @@ void jabil_read_all_templates_and_match(
         // cv_dnn::NMSBoxes(boxes, scores, 0, 0.8f, indices, 1.0, 2);
         // ======================================= NMS =======================================
 
-        // First pass: extract fiducial images 
-        std::map<std::string, cv::Mat> matched_fiducials;
+        // First pass: extract fiducial images
+        std::map<std::string, cv::Mat> matched_fiducial_crops;
         for (auto idx: indices)
         {
             auto match = matches[idx];
@@ -650,104 +816,27 @@ void jabil_read_all_templates_and_match(
             std::experimental::filesystem::path fiducial_src_p(templ[0].fiducial_src);
             fiducial_path = template_path / fiducial_src_p;
             cv::Mat img_fid_gray = cv::imread(fiducial_path.string(), cv::IMREAD_GRAYSCALE);
-            matched_fiducials[templ[0].fiducial_src] = img_fid_gray;
+            matched_fiducial_crops[templ[0].fiducial_src] = img_fid_gray;
         }
-        
-        // Second pass: to filtering
-        cv::Mat img_show = img_orig(roi).clone();
-        for (auto idx: indices)
+
+        if (showMatchings(img, matches, indices, matched_fiducial_crops, detector) == 113)
         {
-            auto match = matches[idx];
-            auto templ = detector.getTemplates(match.class_id, match.template_id);
-
-            // NEED TO FILTER THE FALSE POSITIVES
-            // 1. Use template matching
-            // 1.1 Extract matched ROI
-            cv::Rect templ_roi = cv::Rect(match.x, match.y, templ[0].width, templ[0].height);
-            cv::Mat img_roi = img(templ_roi).clone();
-            cv::Mat img_roi_gray;
-            cv::cvtColor(img_roi, img_roi_gray, cv::COLOR_BGR2GRAY);
-
-            // 1.2 extract fiducial
-            cv::Mat img_fiducial = extractFiducialImg(matched_fiducials, templ[0]);
-
-            // ==== SHOW ROI AND FIDUCIAL SIDE BY SIDE ====
-            cv::Mat frame;
-            std::vector<cv::Mat> images = {img_roi_gray, img_fiducial};
-            int max_height = std::max(img_roi_gray.rows, img_fiducial.rows);
-            int padding = 5;
-
-            for (const cv::Mat& img : images)
-            {
-                int top = 0, bottom = 0;
-                if (img.rows < max_height)
-                {
-                    top = (max_height - img.rows) / 2;
-                    bottom = max_height - img.rows - top;
-                }
-                cv::Mat padded_img;
-                cv::copyMakeBorder(img, padded_img, top + padding, bottom + padding,
-                    padding, padding, cv::BORDER_CONSTANT);
-                if (frame.empty())
-                    frame = padded_img;
-                else cv::hconcat(frame, padded_img, frame);
-            }
-
-            cv::imshow(to_string(match.template_id), frame);
-            cv::waitKey(0);
-            // ==== SHOW ROI AND FIDUCIAL SIDE BY SIDE ====
-
-#if 1
-            // templ[0] == base of pyramid
-            int x = templ[0].width + match.x;
-            int y = templ[0].height + match.y;
-            int r = templ[0].width/2;
-            
-            // cv::Vec3b randColor = {rand()%155+100, rand()%155+100, rand()%155+100};
-            cv::Vec3b randColor = {255, 0, 0};
-
-            for(int i = 0; i < templ[0].features.size(); i++){
-                auto feat = templ[0].features[i];
-                cv::circle(
-                    img_show,
-                    {feat.x + match.x, feat.y + match.y},
-                    2,
-                    randColor,
-                    -1
-                );
-            }
-
-            //    Legend
-            std::stringstream legend_t, sscale_t;
-            sscale_t.precision(2);
-            sscale_t << templ[0].sscale;
-            legend_t << "Box " << to_string(match.template_id) << " : "
-                     << "[" << templ[0].fiducial_src << "], "
-                     << "(" << int(templ[0].orientation) << ", " << sscale_t.str() << "), sim="
-                     << to_string(int(round(match.similarity)))
-                     << "..."
-                     << templ_roi
-                     << " -- "
-                     << img_fiducial.size();
-
-            std::cout << legend_t.str() << std::endl;
-
-            // Box
-            cv::rectangle(img_show, {match.x, match.y}, {x, y}, randColor, 2);
-            cv::putText(
-                img_show,
-                to_string(match.template_id), cv::Point(match.x+r-10, match.y-3),
-                cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
-            );
-#endif
+            break;
         }
-        timer_filter.out("[post-process match filtering]");
-#if 1
-        cv::imshow("Image with matches", img_show);
-        cv::waitKey(0);
+
+        if(showQuantization(img, detector, f.filename()) == 113)
+        {
+            break;
+        }
         cv::destroyAllWindows();
-#endif
-        timer_wall.out("File processing");
+
+        // Second pass: to filtering
+        // for (auto idx: indices)
+        // {
+        //     auto match = matches[idx];
+        //     auto templ = detector.getTemplates(match.class_id, match.template_id);
+        // }
+        // timer_wall.out("File processing");
     }
 }
 
