@@ -36,7 +36,18 @@ include_directories(${OpenCV_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
 include_directories (${INCLUDE_DIRECTORIES} "${CMAKE_CURRENT_SOURCE_DIR}/MIPP/")
 
 
-# test exe
-add_executable(${PROJECT_NAME}_test line2Dup.cpp test_jabil.cpp)
+add_executable(
+    ${PROJECT_NAME}_test
+    utils.hpp utils.cpp
+    line2Dup.h line2Dup.cpp
+    test_jabil.cpp
+)
 target_link_libraries(${PROJECT_NAME}_test ${OpenCV_LIBS} ${Boost_LIBRARIES} stdc++fs)
 
+add_executable(
+    ${PROJECT_NAME}_test_old
+    utils.hpp utils.cpp
+    line2Dup.h line2Dup.cpp
+    test_old.cpp
+)
+target_link_libraries(${PROJECT_NAME}_test_old ${OpenCV_LIBS} ${Boost_LIBRARIES} stdc++fs)
