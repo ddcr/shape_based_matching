@@ -160,8 +160,8 @@ static Rect cropTemplates(std::vector<Template> &templates)
     return Rect(min_x, min_y, max_x - min_x, max_y - min_y);
 }
 
-bool ColorGradientPyramid::selectScatteredFeatures(const std::vector<Candidate> &candidates,
-                                                   std::vector<Feature> &features,
+bool ColorGradientPyramid::selectScatteredFeatures(const std::vector<Candidate>& candidates,
+                                                   std::vector<Feature>& features,
                                                    size_t num_features, float distance)
 {
     features.clear();
@@ -514,6 +514,33 @@ bool ColorGradientPyramid::extractTemplate(Template &templ) const
     {
         return false;
     }
+
+#if 0
+    cv::Mat magnitude_norm;
+    cv::normalize(magnitude, magnitude_norm, 0, 255, cv::NORM_MINMAX, CV_8U);
+
+    for (const auto& c: candidates)
+    {
+        cv::circle(magnitude_valid, {c.f.x, c.f.y}, 2, {255, 0, 0}, -1);
+    }
+
+    std::string window1 = "gradient magnitude";
+    std::string window2 = "gradient filtered (local maxima gradient)";
+    cv::namedWindow(window1, WINDOW_AUTOSIZE);
+    cv::namedWindow(window2, WINDOW_AUTOSIZE);
+    cv::moveWindow(window1, 80, 50);
+    cv::moveWindow(window2, 300, 50);
+
+    cv::imshow(window1, magnitude_norm);
+    cv::imshow(window2, magnitude_valid);
+
+    int key = cv::waitKey(0);
+    if (key == 113)
+    {
+        exit(0);
+    }
+    cv::destroyAllWindows();
+#endif
 
     // Size determined externally, needs to match templates for other modalities
     templ.width = -1;

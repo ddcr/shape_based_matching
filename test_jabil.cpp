@@ -2,6 +2,7 @@
 #include "utils.hpp"
 #include <memory>
 #include <iostream>
+#include <fstream>
 #include <boost/program_options.hpp>
 #include <assert.h>
 #include <regex>
@@ -23,8 +24,13 @@ int DEF_NUM_FEATURE = 150;
 float DEF_WEAK_THRESHOLD = 235.0f;
 float DEF_STRONG_THRESHOLD = 240.0f;
 
+// Scale range of templates
 float SCALE_RANGE_MIN = 0.9f;
 float SCALE_RANGE_MAX = 1.1f;
+float SCALE_RANGE_STEP = 0.1f;
+
+// Detector threshold for detection
+float DET_THRESHOLD = 90.0f;
 
 void jabil_create_templates(line2Dup::Detector detector)
 {
@@ -59,6 +65,7 @@ void jabil_create_templates(line2Dup::Detector detector)
             // ONLY ALLOW MULTIPLES OF 90 DEGREES
             shape_based_matching::shapeInfo_producer fid_shapes(fiducial_img, cv::Mat());
 
+            // forget about this for now ...
             if (0)
             {
                 // create mask
@@ -69,9 +76,8 @@ void jabil_create_templates(line2Dup::Detector detector)
             fid_shapes.angle_range = {0, 270};
             fid_shapes.angle_step = 90;
 
-            fid_shapes.scale_range = {0.9, 1.1};
-            // fid_shapes.scale_range = {0.8, 1.2};
-            fid_shapes.scale_step = 0.1;
+            fid_shapes.scale_range = {SCALE_RANGE_MIN, SCALE_RANGE_MAX};
+            fid_shapes.scale_step = SCALE_RANGE_STEP;
             fid_shapes.produce_infos();
 
             // ddcr: write info directly in template yaml file
@@ -86,10 +92,8 @@ void jabil_create_templates(line2Dup::Detector detector)
                     info.angle,
                     fiducial_src
                 );
-                // if (templ_id != -1)
-                // {
-                //     infos_have_templ.push_back(info);
-                // }
+                if (templ_id == -1)
+                    std::cout << "Could not create template with ID:" << templ_id << std::endl;
             }
             // fid_shapes.save_infos(infos_have_templ, f + ".info.yaml");
         }
@@ -150,6 +154,10 @@ void jabil_read_all_templates_and_match(
         filelist.push_back(dir_entry.path());
     }
 
+#if GRAD_DEBUG
+    ofstream fgrad("gradients.csv", std::ios::app);
+#endif
+
     for (auto &f: filelist)
     {
         Timer timer_wall;
@@ -169,7 +177,7 @@ void jabil_read_all_templates_and_match(
         Mat img = img_orig(roi).clone();
 
         Timer timer_match;
-        auto matches = detector.match(img, 90, class_ids);
+        auto matches = detector.match(img, DET_THRESHOLD, class_ids);
         timer_match.out("[detector match]");
         std::cout << "matches.size(): " << matches.size() << std::endl;
 
@@ -208,7 +216,8 @@ void jabil_read_all_templates_and_match(
             matched_fiducial_crops[templ[0].fiducial_src] = img_fid_gray;
         }
 
-        if (showMatchings(img, matches, indices, matched_fiducial_crops, detector) == 113)
+#if 1
+        if (showMatchings(img, matches, indices, matched_fiducial_crops, detector, f.filename()) == 113)
         {
             break;
         }
@@ -218,6 +227,16 @@ void jabil_read_all_templates_and_match(
             break;
         }
         cv::destroyAllWindows();
+#endif
+
+#if GRAD_DEBUG
+        cv::Ptr<line2Dup::ColorGradientPyramid> colorGradientPyramid = detector.getModalities()->process(img, cv::Mat());
+        cv::Mat img_mag = colorGradientPyramid->magnitude;  // CV_32F
+        double min_grad = -1.0;
+        double max_grad = -1.0;
+        cv::minMaxLoc(img_mag, &min_grad, &max_grad);
+        fgrad << testdir << ", " << f.filename() << ", " << min_grad << ", " << std::sqrt(max_grad) << std::endl;
+#endif
 
         // Second pass: to filtering
         // for (auto idx: indices)
@@ -225,7 +244,7 @@ void jabil_read_all_templates_and_match(
         //     auto match = matches[idx];
         //     auto templ = detector.getTemplates(match.class_id, match.template_id);
         // }
-        // timer_wall.out("File processing");
+        timer_wall.out("File processing");
     }
 }
 
@@ -236,7 +255,7 @@ int main(int argc, const char** argv){
 
     float weak_threshold, strong_threshold;
     int num_features;
-    bool create_templates;
+    bool create_templates, create_templates_only;
     boost::program_options::options_description desc("Allowed options");
     desc.add_options()
         (
@@ -257,7 +276,12 @@ int main(int argc, const char** argv){
         (
             "create_template,c",
             boost::program_options::value<bool>(&create_templates)->default_value(false),
-            "Create templates?"
+            "Create templates before processing images?"
+        )
+        (
+            "create_template_only,k",
+            boost::program_options::value<bool>(&create_templates_only)->default_value(false),
+            "Create templates only?"
         )
         (
             "testdir,t",
@@ -293,7 +317,15 @@ int main(int argc, const char** argv){
     std::cout << "Create templates? " << create_templates << std::endl;
     std::cout << "Test directory: " << testdir << std::endl;
 
-    jabil_read_all_templates_and_match(testdir, weak_threshold, strong_threshold, num_features, create_templates);
+    if(create_templates_only)
+    {
+        line2Dup::Detector detector(num_features, {4, 8}, weak_threshold, strong_threshold);
+        jabil_create_templates(detector);
+    }
+    else
+    {
+        jabil_read_all_templates_and_match(testdir, weak_threshold, strong_threshold, num_features, create_templates);
+    }
 
     return 0;
 }

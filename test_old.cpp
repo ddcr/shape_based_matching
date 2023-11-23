@@ -1,6 +1,7 @@
 #include "line2Dup.h"
 #include "utils.hpp"
 #include <string>
+#include <boost/program_options.hpp>
 #include <assert.h>
 #include <regex>
 #include <experimental/filesystem>
@@ -269,10 +270,101 @@ void jabil_create_one_template()
     std::cout << detector.numTemplates() << std::endl;
 }
 
+void test_preprocess(std::string testdir, bool clahe=true)
+{
+    const std::experimental::filesystem::path path_test_images{
+        PREFIX_PATH + "/inspection_images/2023-07-27/JabilCam-modelos/tag_candidate/" + testdir
+    };
+
+    std::vector<std::experimental::filesystem::path> filelist;
+    for (auto const& dir_entry : std::experimental::filesystem::directory_iterator{ path_test_images })
+    {
+        filelist.push_back(dir_entry.path());
+    }
+
+    for (auto &f: filelist)
+    {
+        Timer timer_wall;
+
+        cv::Mat img_orig = imread(f.string());
+        assert(!img_orig.empty() && "check your img path");
+
+        // compatibility wth line2Dup::computeResponseMaps()
+        // make the img having 16*n width & height
+        int stride = 16;
+        int n = img_orig.rows/stride;
+        int m = img_orig.cols/stride;
+        Rect roi(0, 0, stride*m , stride*n);
+        cv::Mat img = img_orig(roi).clone();
+        cv::resize(img, img, cv::Size(), 0.5f, 0.5f);
+
+        cv::Mat1b img_gray;
+        cv::cvtColor(img, img_gray, cv::COLOR_BGR2GRAY);
+
+        cv::Mat1b img_cdf, concatenated;
+        if (clahe)
+        {
+            cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(40.0f, cv::Size(8,8));
+            clahe->apply(img_gray, img_cdf);
+        }
+        else
+        {
+            cv::equalizeHist(img_gray, img_cdf);
+        }
+
+        cv::hconcat(img_gray, img_cdf, concatenated);
+
+        std::string windowLabel = f.filename();
+        cv::namedWindow(windowLabel, WINDOW_AUTOSIZE);
+        cv::moveWindow(windowLabel, 40, 50);
+        cv::imshow(windowLabel, concatenated);
+        int key = cv::waitKey(0);
+        if (key == 113)
+        {
+            break;
+        }
+        cv::destroyAllWindows();
+
+        timer_wall.out("File processing");
+    }
+}
+
 int main(int argc, const char** argv){
     // jabil_test1();
     // jabil_match();
-    jabil_create_one_template();
+    // jabil_create_one_template();
+    boost::program_options::options_description desc("Allowed options");
+
+    desc.add_options()
+        (
+            "testdir,t",
+            boost::program_options::value<std::string>(),
+            "Test directory"
+        )
+        ("help,h", "Print usage information");
+
+    boost::program_options::positional_options_description pdesc;
+    pdesc.add("testdir", 1);
+
+    // parse options
+    boost::program_options::variables_map vm;
+    boost::program_options::store(boost::program_options::command_line_parser(argc, argv).options(desc).positional(pdesc).run(), vm);
+    boost::program_options::notify(vm);
+
+    if(vm.count("help"))
+    {
+        std::cout << desc << std::endl;
+        // std::cout << cv::getBuildInformation() << std::endl;
+        return 0;
+    }
+
+    std::string testdir = "EXAR";
+    if(vm.count("testdir"))
+    {
+        testdir = vm["testdir"].as<std::string>();
+    }
+
+    test_preprocess(testdir);
 
     return 0;
 }

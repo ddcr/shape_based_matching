@@ -278,10 +278,11 @@ public:
         }
         else
         {
-            // cv::resize(src, dst, cv::Size(), scale, scale);
-            cv::Point2f center(src.cols/2.0f, src.rows/2.0f);
-            cv::Mat rot_mat = cv::getRotationMatrix2D(center, angle, scale);
-            cv::warpAffine(src, dst, rot_mat, src.size());
+            cv::resize(src, dst, cv::Size(), scale, scale);
+            // introduces a border when scale != 1
+            // cv::Point2f center(src.cols/2.0f, src.rows/2.0f);
+            // cv::Mat rot_mat = cv::getRotationMatrix2D(center, angle, scale);
+            // cv::warpAffine(src, dst, rot_mat, src.size());
         }
         return dst;
     }
