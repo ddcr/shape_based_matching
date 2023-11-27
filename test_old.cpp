@@ -6,8 +6,8 @@
 #include <regex>
 #include <experimental/filesystem>
 
+using namespace cv;
 static std::string PREFIX_PATH = "/home/ivision/jabil_tag_reader/dev_area/jabil_dev_phase4";
-
 void jabil_test1()
 {
     int num_feature = 150;

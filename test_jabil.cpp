@@ -1,5 +1,6 @@
 #include "line2Dup.h"
 #include "utils.hpp"
+#include "nms.hpp"
 #include <memory>
 #include <iostream>
 #include <fstream>
@@ -31,6 +32,27 @@ float SCALE_RANGE_STEP = 0.1f;
 
 // Detector threshold for detection
 float DET_THRESHOLD = 90.0f;
+
+std::map<std::string,std::string> map_models = {
+    {"2_1688586489", "EXAR"},
+    {"3_1688650244", "TAIYO YUNDEN"},
+    {"4_1688651426", "SAMSUNG"},
+    {"5_1688652122", "YAGEO"},
+    {"6_1688652831", "HILISIN"},
+    {"7_1688653607", "WALSIN SINCERA"},
+    {"8_1688654280", "AMAZING"},
+    {"9_1688655019", "LRC"},
+    {"10_1688655560", "DARFON"},
+    {"11_1688656382", "MURATA"},
+    {"12_1688659851", "WALSIN"},
+    {"13_1688661142", "VIKING"},
+    {"14_1688661964", "LITEON"},
+    {"15_1688663919", "VISHAY"},
+    {"16_1688765210", "DARFON_02"},
+    {"19_1689171468", "JOHANSON"},
+    {"20_1689179930", "MICROCHIP"},
+    {"21_1689693018", "HILSIN_02"}
+};
 
 void jabil_create_templates(line2Dup::Detector detector)
 {
@@ -179,7 +201,7 @@ void jabil_read_all_templates_and_match(
         Timer timer_match;
         auto matches = detector.match(img, DET_THRESHOLD, class_ids);
         timer_match.out("[detector match]");
-        std::cout << "matches.size(): " << matches.size() << std::endl;
+        // std::cout << "matches.size(): " << matches.size() << std::endl;
 
         Timer timer_filter;
         // ======================================= NMS =======================================
@@ -216,12 +238,68 @@ void jabil_read_all_templates_and_match(
             matched_fiducial_crops[templ[0].fiducial_src] = img_fid_gray;
         }
 
+        // Second pass: filter false positives
+        int imatch = 0;
+        for (auto idx: indices)
+        {
+            auto match = matches[idx];
+            auto templ = detector.getTemplates(match.class_id, match.template_id);
+
+            // object identified
+            cv::Rect templ_roi = cv::Rect(match.x, match.y, templ[0].width, templ[0].height);
+            cv::Mat img_roi = img(templ_roi).clone();
+            cv::Mat1b img_roi_gray;
+            cv::cvtColor(img_roi, img_roi_gray, cv::COLOR_BGR2GRAY);
+
+            // fiducial from DB
+            cv::Mat imgfid_gray = extractFiducialImg(matched_fiducial_crops, templ[0]);
+            cv::Rect fid_roi = cv::Rect(templ[0].tl_x, templ[0].tl_y, templ[0].width, templ[0].height);
+            cv::Mat imgfid_roi_gray = imgfid_gray(fid_roi).clone();
+
 #if 1
-        if (showMatchings(img, matches, indices, matched_fiducial_crops, detector, f.filename()) == 113)
+            double hcorr = -1.0;
+            // histogram comparison
+            // std::vector<double> img_roi_hist = calcHistogram(img_roi_gray);
+            // std::vector<double> imgfid_roi_hist = calcHistogram(imgfid_roi_gray);
+            // double hcorr = compHistogram(img_roi_hist, imgfid_roi_hist);
+            // correlation matching
+            cv::Mat resultArray;
+            double tmp;
+            cv::matchTemplate(img_roi_gray, imgfid_roi_gray, resultArray, cv::TM_CCOEFF_NORMED);
+            cv::minMaxLoc(resultArray, &tmp, &hcorr);
+#endif
+
+#if 0
+            std::stringstream sscale_t, similarity_t, hcorr_t;
+            sscale_t.precision(2);
+            similarity_t.precision(2);
+            hcorr_t.precision(2);
+            sscale_t << templ[0].sscale;
+            similarity_t << match.similarity;
+            hcorr_t << hcorr;
+            std::vector<std::string> extraInfo = {
+                "Box: " + to_string(match.template_id),
+                "Scal/Orient: " + sscale_t.str() + ", " + to_string(int(templ[0].orientation)),
+                "Sim: " + similarity_t.str() + ", Filter Corr: " + hcorr_t.str()
+            };
+
+            showIndividualMatchings(img_roi_gray, imgfid_roi_gray, match.similarity,
+                                    map_models[match.class_id],
+                                    extraInfo, imatch);
+#endif
+            imatch++;
+        }
+        timer_filter.out("Filter false positives");
+
+#if 0
+        if (showAllMatchings(img, matches, indices, matched_fiducial_crops, detector, f.filename()) == 113)
         {
             break;
         }
+        cv::destroyAllWindows();
+#endif
 
+#if 0
         if(showQuantization(img, detector, f.filename()) == 113)
         {
             break;
@@ -238,12 +316,6 @@ void jabil_read_all_templates_and_match(
         fgrad << testdir << ", " << f.filename() << ", " << min_grad << ", " << std::sqrt(max_grad) << std::endl;
 #endif
 
-        // Second pass: to filtering
-        // for (auto idx: indices)
-        // {
-        //     auto match = matches[idx];
-        //     auto templ = detector.getTemplates(match.class_id, match.template_id);
-        // }
         timer_wall.out("File processing");
     }
 }

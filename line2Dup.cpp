@@ -524,6 +524,11 @@ bool ColorGradientPyramid::extractTemplate(Template &templ) const
         cv::circle(magnitude_valid, {c.f.x, c.f.y}, 2, {255, 0, 0}, -1);
     }
 
+    for (const auto& f: templ.features)
+    {
+        cv::circle(magnitude_norm, {f.x, f.y}, 2, {255, 255, 255}, -1);
+    }
+
     std::string window1 = "gradient magnitude";
     std::string window2 = "gradient filtered (local maxima gradient)";
     cv::namedWindow(window1, WINDOW_AUTOSIZE);

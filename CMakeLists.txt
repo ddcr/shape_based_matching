@@ -38,6 +38,7 @@ include_directories (${INCLUDE_DIRECTORIES} "${CMAKE_CURRENT_SOURCE_DIR}/MIPP/")
 
 add_executable(
     ${PROJECT_NAME}_test
+    nms.hpp
     utils.hpp utils.cpp
     line2Dup.h line2Dup.cpp
     test_jabil.cpp

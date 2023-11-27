@@ -1,28 +1,9 @@
 #include "line2Dup.h"
+#include "utils.hpp"
 #include <opencv2/core/core.hpp>
 #include <iostream>
 #include <string>
 
-std::map<std::string,std::string> map_models = {
-    {"2_1688586489", "EXAR"},
-    {"3_1688650244", "TAIYO YUNDEN"},
-    {"4_1688651426", "SAMSUNG"},
-    {"5_1688652122", "YAGEO"},
-    {"6_1688652831", "HILISIN"},
-    {"7_1688653607", "WALSIN SINCERA"},
-    {"8_1688654280", "AMAZING"},
-    {"9_1688655019", "LRC"},
-    {"10_1688655560", "DARFON"},
-    {"11_1688656382", "MURATA"},
-    {"12_1688659851", "WALSIN"},
-    {"13_1688661142", "VIKING"},
-    {"14_1688661964", "LITEON"},
-    {"15_1688663919", "VISHAY"},
-    {"16_1688765210", "DARFON_02"},
-    {"19_1689171468", "JOHANSON"},
-    {"20_1689179930", "MICROCHIP"},
-    {"21_1689693018", "HILSIN_02"}
-};
 
 using namespace cv;
 using namespace std;
@@ -73,8 +54,7 @@ cv::Mat displayQuantized(const Mat& quantized)
 
 cv::Mat extractFiducialImg(
     const std::map<std::string,cv::Mat>& matched_fiducials,
-    const line2Dup::Template& templ,
-    bool addTitle=true
+    const line2Dup::Template& templ
 )
 {
     cv::Mat dst;
@@ -102,14 +82,6 @@ cv::Mat extractFiducialImg(
     if (std::abs(templ.sscale-1.0) > FLT_EPSILON)
     {
         cv::resize(dst, dst, cv::Size(), templ.sscale, templ.sscale);
-    }
-
-    if (addTitle)
-    {
-        std::string fiducial_src = templ.fiducial_src;
-        std::string fiducial_substr = fiducial_src.substr(0, fiducial_src.find('.'));
-        std::string modelName = map_models.at(fiducial_substr);
-        cv::putText(dst, modelName, cv::Point(0, dst.rows/2), cv::FONT_HERSHEY_PLAIN, 1.0f, {0, 0, 0}, 2);
     }
 
     return dst;
@@ -144,13 +116,117 @@ int showQuantization(const cv::Mat& img, line2Dup::Detector detector, std::strin
     return cv::waitKey(0);
 }
 
+#if 1
+void showIndividualMatchings(const cv::Mat& img_roi, const cv::Mat& imgfid_roi,
+                            float similarity, std::string modelName,
+                            std::vector<std::string>& extraInfo, int index_plot)
+{
+    // SHOW ROI AND FIDUCIAL SIDE BY SIDE
+    cv::Mat frame;
+    std::vector<cv::Mat> images = {img_roi, cv::Mat(img_roi.rows, 50, CV_8U, cv::Scalar(0, 0, 0)), imgfid_roi};
+    cv::hconcat(images, frame);
+
+    // Add bottom or right area info depending on aspect ratio
+    if (extraInfo.size())
+    {
+        double aspectRatio = static_cast<double>(frame.cols) / frame.rows;
+
+        if (aspectRatio > 1.0)
+        {
+            // all string elements have same height
+            cv::Size stringSize = cv::getTextSize(extraInfo[0], FONT_HERSHEY_PLAIN, 1.0f, 2, 0) + cv::Size(0, 20);
+            cv::Mat bottomArea(extraInfo.size()*stringSize.height, frame.cols, CV_8U, cv::Scalar(0, 0, 0));
+            int irow = 0;
+            for (auto& t: extraInfo)
+            {
+                cv::Point tloc = cv::Point(10, 20+irow*stringSize.height);
+                cv::putText(bottomArea, t, tloc, cv::FONT_HERSHEY_PLAIN, 1.0f, {255, 255, 255}, 1);
+                irow++;
+            }
+            cv::vconcat(frame, bottomArea, frame);
+        }
+        else
+        {
+            std::vector<std::string>::iterator it_widest = std::max_element(
+                extraInfo.begin(), extraInfo.end(),
+                [](std::string &a, std::string &b) -> bool
+                {
+                    return (a.size() < b.size());
+                }
+            );
+            // choose the widest string element
+            cv::Size widestStringSize = cv::getTextSize(*it_widest, FONT_HERSHEY_PLAIN, 1.0f, 2, 0) + cv::Size(20, 0);
+            cv::Mat rightArea(frame.rows, widestStringSize.width, CV_8U, cv::Scalar(0, 0, 0));
+            int irow = 0;
+            for (auto& t: extraInfo)
+            {
+                cv::Point tloc = cv::Point(10, 50+irow*(widestStringSize.height+10));
+                cv::putText(rightArea, t, tloc, cv::FONT_HERSHEY_PLAIN, 1.0f, {255, 255, 255}, 1);
+                irow++;
+            }
+            cv::hconcat(frame, rightArea, frame);
+        }
+    }
+
+    std::string windowId = to_string(index_plot);
+    cv::namedWindow(windowId, WINDOW_AUTOSIZE);
+    cv::setWindowTitle(windowId, modelName);
+
+    int screen_columns = 4;
+    int irow = index_plot / screen_columns;
+    int icol = index_plot % screen_columns;
+
+    cv::moveWindow(windowId, 450*icol, 200*irow);
+    cv::imshow(windowId, frame);
+}
+
+int showAllMatchings(const cv::Mat& img,
+    const std::vector<line2Dup::Match>& matches,
+    const std::vector<int>& indices,
+    const std::map<std::string, cv::Mat>& matched_fiducials,
+    line2Dup::Detector detector, std::string windowLabel)
+{
+    cv::Mat img_show = img.clone();
+    for (auto idx: indices)
+    {
+        auto match = matches[idx];
+        auto templ = detector.getTemplates(match.class_id, match.template_id);
+
+        // templ[0] == base of pyramid
+        int x = templ[0].width + match.x;
+        int y = templ[0].height + match.y;
+        int r = templ[0].width/2;
+
+        cv::Vec3b randColor = {255, 0, 0};
+
+        for(int i = 0; i < templ[0].features.size(); i++){
+            auto feat = templ[0].features[i];
+            cv::circle(img_show, {feat.x + match.x, feat.y + match.y}, 2, randColor, -1);
+        }
+
+        // Box
+        cv::rectangle(img_show, {match.x, match.y}, {x, y}, randColor, 2);
+        cv::putText(
+            img_show,
+            to_string(match.template_id), cv::Point(match.x+r-10, match.y-3),
+            cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
+        );
+    }
+
+    cv::namedWindow(windowLabel);
+    cv::moveWindow(windowLabel, 680, 400);
+    cv::imshow(windowLabel, img_show);
+
+    return cv::waitKey(0);
+}
+#else
 int showMatchings(const cv::Mat& img, const std::vector<line2Dup::Match>& matches, const std::vector<int>& indices,
     const std::map<std::string, cv::Mat>& matched_fiducials,
     line2Dup::Detector detector, std::string windowLabel)
 {
     cv::Mat img_show = img.clone();
-    int iWindow = 0;
-    int jWindow = 0;
+    int icnt = 0;
+    int ncolumns = 3;
     for (auto idx: indices)
     {
         auto match = matches[idx];
@@ -165,9 +241,14 @@ int showMatchings(const cv::Mat& img, const std::vector<line2Dup::Match>& matche
         // 1.2 extract fiducial with model name imprinted
         cv::Mat img_fiducial = extractFiducialImg(matched_fiducials, templ[0]);
 
+        // 1.3 Add cropping of img_fiducial as well
+        cv::Mat img_fiducial_crop = img_fiducial(
+            cv::Rect(templ[0].tl_x, templ[0].tl_y, templ[0].width, templ[0].height)
+        ).clone();
+
         // ================================== SHOW ROI AND FIDUCIAL SIDE BY SIDE ==================================
         cv::Mat frame;
-        std::vector<cv::Mat> images = {img_roi_gray, img_fiducial};
+        std::vector<cv::Mat> images = {img_roi_gray, img_fiducial_crop, img_fiducial};
         int max_height = std::max(img_roi_gray.rows, img_fiducial.rows);
         int padding = 5;
 
@@ -187,10 +268,14 @@ int showMatchings(const cv::Mat& img, const std::vector<line2Dup::Match>& matche
             else cv::hconcat(frame, padded_img, frame);
         }
 
-        std::string windowId = to_string(match.template_id);
-        std::string windowIdTitle = "Box" + to_string(match.template_id) + "/" + to_string(int(round(match.similarity)));
+        std::string windowId = to_string(idx);
+        std::string windowIdTitle = to_string(match.template_id)
+                        + "/" + to_string(int(templ[0].orientation))
+                        + "/" + to_string(int(round(match.similarity)));
         cv::namedWindow(windowId, WINDOW_AUTOSIZE);
-        cv::moveWindow(windowId, (iWindow % 5)*350 + 80, (jWindow % 2)*160+50);
+        int row = icnt / ncolumns;
+        int col = icnt % ncolumns;
+        cv::moveWindow(windowId, col*500+100, row*200+100);
         cv::setWindowTitle(windowId, windowIdTitle);
         cv::imshow(windowId, frame);
         // ================================== SHOW ROI AND FIDUCIAL SIDE BY SIDE ==================================
@@ -229,10 +314,7 @@ int showMatchings(const cv::Mat& img, const std::vector<line2Dup::Match>& matche
             to_string(match.template_id), cv::Point(match.x+r-10, match.y-3),
             cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
         );
-
-        iWindow++;
-        if (((iWindow % 5) == 0))
-            jWindow++;
+        icnt++;
     }
 
     cv::namedWindow(windowLabel);
@@ -240,4 +322,57 @@ int showMatchings(const cv::Mat& img, const std::vector<line2Dup::Match>& matche
     cv::imshow(windowLabel, img_show);
 
     return cv::waitKey(0);
+}
+#endif
+
+std::vector<double> calcHistogram(const cv::Mat1b& img, int histSize)
+{
+    std::vector<double> histogramArray(histSize, 0);
+
+    for (int i = 0; i < img.rows; i++)
+    {
+        for (int j = 0; j < img.cols; j++)
+        {
+            int grayLevel = (int)(img.at<uchar>(i, j));
+            histogramArray[grayLevel]++;
+        }
+    }
+
+    for (int i = 0; i < histSize; i++)
+    {
+        histogramArray[i] = histogramArray[i]/(double)(img.cols * img.rows);
+    }
+    return histogramArray;
+}
+
+double compHistogram(const std::vector<double>& h1, const std::vector<double>& h2)
+{
+
+    const double* hist1;
+    const double* hist2;
+    hist1 = (const double*) h1.data();
+    hist2 = (const double*) h2.data();
+
+    double mean1 = 0, mean2 = 0;
+
+    for(unsigned int i = 0; i<h1.size(); i++)
+    {
+        mean1 += hist1[i];
+        mean2 += hist2[i];
+    }
+    mean1/=h1.size();
+    mean2/=h2.size();
+
+    double r1=0,r2=0,r3=0;
+    double t1,t2;
+    for(unsigned int i = 0; i<h1.size(); i++)
+    {
+        t1 = hist1[i]-mean1;
+        t2 = hist2[i]-mean2;
+
+        r1+=t1*t1;
+        r2+=t2*t2;
+        r3+=t1*t2;
+    }
+    return r3/sqrt(r1*r2);
 }
