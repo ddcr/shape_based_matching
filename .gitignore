@@ -2,3 +2,5 @@ build/
 .idea/
 .vscode/
 CMakeLists.txt.user
+Persistence/
+model_images/

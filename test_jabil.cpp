@@ -1,6 +1,11 @@
+#include "csv.hpp"
 #include "line2Dup.h"
 #include "utils.hpp"
 #include "nms.hpp"
+
+#include "common_structs.hpp"
+#include <QDebug>
+
 #include <memory>
 #include <iostream>
 #include <fstream>
@@ -8,8 +13,11 @@
 #include <assert.h>
 #include <regex>
 #include <experimental/filesystem>
+
 using namespace std;
 using namespace cv;
+
+#define IMAGES_DBG 1
 
 static std::string PREFIX_PATH = "/home/ivision/jabil_tag_reader/dev_area/jabil_dev_phase4";
 
@@ -22,8 +30,10 @@ static std::string PREFIX_PATH = "/home/ivision/jabil_tag_reader/dev_area/jabil_
  *                         larger than this.
 */
 int DEF_NUM_FEATURE = 150;
-float DEF_WEAK_THRESHOLD = 235.0f;
-float DEF_STRONG_THRESHOLD = 240.0f;
+// float DEF_WEAK_THRESHOLD = 235.0f;
+// float DEF_STRONG_THRESHOLD = 240.0f;
+float DEF_WEAK_THRESHOLD = 100.0f;
+float DEF_STRONG_THRESHOLD = 200.0f;
 
 // Scale range of templates
 float SCALE_RANGE_MIN = 0.9f;
@@ -54,7 +64,7 @@ std::map<std::string,std::string> map_models = {
     {"21_1689693018", "HILSIN_02"}
 };
 
-void jabil_create_templates(line2Dup::Detector detector)
+void createLinemod2DTemplates(line2Dup::Detector detector)
 {
     // line2Dup::Detector detector(DEF_NUM_FEATURE, {4, 8}, DEF_WEAK_THRESHOLD, DEF_STRONG_THRESHOLD);
 
@@ -134,7 +144,7 @@ void jabil_read_all_templates_and_match(
 
     if (create_template)
     {
-        jabil_create_templates(detector);
+        createLinemod2DTemplates(detector);
     }
 
     // read JABIL template models
@@ -180,6 +190,10 @@ void jabil_read_all_templates_and_match(
     ofstream fgrad("gradients.csv", std::ios::app);
 #endif
 
+    std::ofstream mycsv(testdir+"_timings.csv");
+    // std::stringstream mycsv;
+    auto writer_timings = csv::make_tsv_writer(mycsv);
+
     for (auto &f: filelist)
     {
         Timer timer_wall;
@@ -200,8 +214,7 @@ void jabil_read_all_templates_and_match(
 
         Timer timer_match;
         auto matches = detector.match(img, DET_THRESHOLD, class_ids);
-        timer_match.out("[detector match]");
-        // std::cout << "matches.size(): " << matches.size() << std::endl;
+        // timer_match.out("[detector match]");
 
         Timer timer_filter;
         // ======================================= NMS =======================================
@@ -256,20 +269,27 @@ void jabil_read_all_templates_and_match(
             cv::Rect fid_roi = cv::Rect(templ[0].tl_x, templ[0].tl_y, templ[0].width, templ[0].height);
             cv::Mat imgfid_roi_gray = imgfid_gray(fid_roi).clone();
 
-#if 1
             double hcorr = -1.0;
-            // histogram comparison
+            // ==== histogram comparison
             // std::vector<double> img_roi_hist = calcHistogram(img_roi_gray);
             // std::vector<double> imgfid_roi_hist = calcHistogram(imgfid_roi_gray);
-            // double hcorr = compHistogram(img_roi_hist, imgfid_roi_hist);
-            // correlation matching
+            // hcorr = compHistogram(img_roi_hist, imgfid_roi_hist);
+
+            // ==== correlation matching
             cv::Mat resultArray;
             double tmp;
             cv::matchTemplate(img_roi_gray, imgfid_roi_gray, resultArray, cv::TM_CCOEFF_NORMED);
             cv::minMaxLoc(resultArray, &tmp, &hcorr);
-#endif
+            if ( hcorr < 0.7f )
+                continue;
 
-#if 0
+            // SSIM
+            // cv::Scalar tt = evalSSIM(img_roi_gray, imgfid_roi_gray).first;
+            // hcorr = tt.val[0];
+            // if ( hcorr < 0.5f )
+            //     continue;
+
+#ifdef IMAGES_DBG
             std::stringstream sscale_t, similarity_t, hcorr_t;
             sscale_t.precision(2);
             similarity_t.precision(2);
@@ -289,9 +309,9 @@ void jabil_read_all_templates_and_match(
 #endif
             imatch++;
         }
-        timer_filter.out("Filter false positives");
+        // timer_filter.out("Filter false positives");
 
-#if 0
+#ifdef IMAGES_DBG
         if (showAllMatchings(img, matches, indices, matched_fiducial_crops, detector, f.filename()) == 113)
         {
             break;
@@ -299,7 +319,7 @@ void jabil_read_all_templates_and_match(
         cv::destroyAllWindows();
 #endif
 
-#if 0
+#ifdef QUANTIZATION_DBG
         if(showQuantization(img, detector, f.filename()) == 113)
         {
             break;
@@ -307,7 +327,7 @@ void jabil_read_all_templates_and_match(
         cv::destroyAllWindows();
 #endif
 
-#if GRAD_DEBUG
+#ifdef GRADIENT_DBG
         cv::Ptr<line2Dup::ColorGradientPyramid> colorGradientPyramid = detector.getModalities()->process(img, cv::Mat());
         cv::Mat img_mag = colorGradientPyramid->magnitude;  // CV_32F
         double min_grad = -1.0;
@@ -316,19 +336,25 @@ void jabil_read_all_templates_and_match(
         fgrad << testdir << ", " << f.filename() << ", " << min_grad << ", " << std::sqrt(max_grad) << std::endl;
 #endif
 
-        timer_wall.out("File processing");
+        // timer_wall.out("File processing");
+        writer_timings << std::make_tuple("arquivo", timer_wall.elapsed(), timer_match.elapsed(), timer_filter.elapsed());
     }
+
 }
 
-int main(int argc, const char** argv){
-    // jabil_match();
-    // jabil_create_one_template();
-    // jabil_test();
-
+int main(int argc, const char** argv)
+{
     float weak_threshold, strong_threshold;
     int num_features;
     bool create_templates, create_templates_only;
     boost::program_options::options_description desc("Allowed options");
+
+    std::vector<ModelTag> modelTags = extractTagModelFiducialsFromDB();
+    for(const auto& modelTag: modelTags)
+    {
+        qDebug() << modelTag;
+    }
+
     desc.add_options()
         (
             "weak_threshold,w",
@@ -392,7 +418,7 @@ int main(int argc, const char** argv){
     if(create_templates_only)
     {
         line2Dup::Detector detector(num_features, {4, 8}, weak_threshold, strong_threshold);
-        jabil_create_templates(detector);
+        createLinemod2DTemplates(detector);
     }
     else
     {

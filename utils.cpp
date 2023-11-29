@@ -1,5 +1,12 @@
 #include "line2Dup.h"
 #include "utils.hpp"
+#include "dao_wrapper.hpp"
+
+#include <QVector>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+
 #include <opencv2/core/core.hpp>
 #include <iostream>
 #include <string>
@@ -375,4 +382,155 @@ double compHistogram(const std::vector<double>& h1, const std::vector<double>& h
         r3+=t1*t2;
     }
     return r3/sqrt(r1*r2);
+}
+
+std::pair<cv::Scalar, cv::Mat> evalSSIM(const cv::Mat& img1_in, const cv::Mat& img2_in)
+{
+
+	// default settings
+	const float C1 = 6.5025, C2 = 58.5225;
+
+	cv::Mat img1, img2;
+
+	img1_in.convertTo(img1, CV_32FC3);
+	img2_in.convertTo(img2, CV_32FC3);
+
+	cv::Mat mu1, mu1_sq;
+	cv::GaussianBlur(img1, mu1, cv::Size(11, 11), 1.5f, 1.5f);
+	cv::multiply(mu1, mu1, mu1_sq);
+	cv::Mat img1_sq, sigma1_sq;
+	cv::multiply(img1, img1, img1_sq);
+	cv::GaussianBlur(img1_sq, sigma1_sq, cv::Size(11, 11), 1.5f, 1.5f);
+	cv::subtract(sigma1_sq, mu1_sq, sigma1_sq);
+
+	cv::Mat mu2, mu2_sq;
+	cv::GaussianBlur(img2, mu2, cv::Size(11, 11), 1.5f, 1.5f);
+	cv::multiply(mu2, mu2, mu2_sq);
+	cv::Mat img2_sq, sigma2_sq;
+	cv::multiply(img2, img2, img2_sq);
+	cv::GaussianBlur(img2_sq, sigma2_sq, cv::Size(11, 11), 1.5f, 1.5f);
+	cv::subtract(sigma2_sq, mu2_sq, sigma2_sq);
+
+
+	cv::Mat mu1_mu2;
+	cv::multiply(mu1, mu2, mu1_mu2);
+
+	cv::Mat img1_img2, sigma12;
+	cv::multiply(img1, img2, img1_img2);
+	cv::GaussianBlur(img1_img2, sigma12, cv::Size(11, 11), 1.5f, 1.5f);
+	cv::subtract(sigma12, mu1_mu2, sigma12);
+
+	// numerator
+	cv::Mat t1;
+	cv::multiply(mu1_mu2, 2.0, t1);
+	cv::add(t1, C1, t1);
+
+	cv::Mat t2;
+	cv::multiply(sigma12, 2.0, t2);
+	cv::add(t2, C2, t2);
+
+	cv::Mat t3;
+	cv::multiply(t1, t2, t3);
+
+	// denominator
+	cv::add(mu1_sq, mu2_sq, t1);
+	cv::add(t1, C1, t1);
+	cv::add(sigma1_sq, sigma2_sq, t2);
+	cv::add(t2, C2, t2);
+
+	cv::multiply(t1, t2, t1);
+	cv::Mat ssim_map;
+	cv::divide(t3, t1, ssim_map);
+
+#ifdef CROP
+	//skimage: to avoid edge effects will ignore filter radius strip around edges
+	cv::Rect crop(5, 5, ssim_map.cols-5, ssim_map.rows-5);
+	cv::Mat ssim_map_cropped = ssim_map(crop);
+#endif
+
+	const cv::Scalar mssim = cv::mean(ssim_map);
+	return {mssim, std::move(ssim_map)};
+}
+
+// =================================================================================
+
+cv::Size getImageSize(std::string parImagePath)
+{
+    cv::Mat img = cv::imread(parImagePath);
+    if (img.empty())
+    {
+        std::string error_msg = "[ERROR] Error when loading image " + parImagePath + "!";
+        throw std::runtime_error(error_msg);
+    }
+
+    return img.size();
+}
+
+BBox parsePositions(QString parStringPositions, cv::Size imgSz)
+{
+    QJsonParseError error;
+    QJsonDocument data = QJsonDocument::fromJson(parStringPositions.toUtf8(), &error);
+    QJsonObject obj = data.object();
+    if (obj.empty())
+        throw std::invalid_argument("BBox Json Empty!");
+
+    BBox b;
+    b.x = int(obj["X"].toString().toFloat() * imgSz.width);
+    b.y = int(obj["Y"].toString().toFloat() * imgSz.height);
+    b.width = int(obj["width"].toString().toFloat() * imgSz.width);
+    b.height = int(obj["height"].toString().toFloat() * imgSz.height);
+    b.x_pixels = obj["X_pixels"].toString().toInt();
+    b.y_pixels = obj["Y_pixels"].toString().toInt();
+    b.width_pixels = obj["width_pixels"].toString().toInt();
+    b.height_pixels = obj["height_pixels"].toString().toInt();
+    b.w_image = obj["w_image"].toString().toInt();
+    b.h_image = obj["h_image"].toString().toInt();
+
+    return b;
+}
+
+std::vector<ModelTag> extractTagModelFiducialsFromDB()
+{
+    std::vector<ModelTag> modelTags;
+
+    DAOWrapper* daoWrapper;
+    daoWrapper = DAOWrapper::getInstance();
+
+    QVector<TagModel> tagModels = daoWrapper->getAllTagModels();
+
+    foreach (TagModel tagModel, tagModels)
+    {
+        ModelTag modelTag;
+        modelTag.modelID = tagModel.tagModelID;
+        modelTag.modelFileName = tagModel.refImageURL.toStdString();
+        modelTag.imageSize = getImageSize(modelTag.modelFileName);
+        modelTag.modelName = tagModel.name.toStdString();
+        foreach (TagModelField tagModelField, tagModel.tagFields)
+        {
+            TagField tagField = daoWrapper->getTagField(tagModelField.tagFieldID);
+
+            if (tagField.tagFieldTypeID == 3)
+            {
+                BBox box = parsePositions(tagModelField.geometricalInfo, modelTag.imageSize);
+
+                if (box.x >= 0 && box.y >= 0 && box.x + box.width <= modelTag.imageSize.width && box.y + box.height <= modelTag.imageSize.height)
+                {
+                    // The crop is within the image bounds
+                    cv::Rect crop(box.x, box.y, box.width, box.height);
+                    modelTag.crops.push_back(crop);
+                }
+                else
+                {
+                    QString fiducialPosError = QString("A posição do fiducial '%1' do modelo '%2' está incorreta. Favor corrigir o banco de templates.")\
+                        .arg(tagField.name)\
+                        .arg(QString::fromStdString(modelTag.modelName));
+                    throw std::invalid_argument(fiducialPosError.toStdString());
+                }
+            }
+        }
+
+        if (modelTag.crops.size() > 0)
+            modelTags.push_back(modelTag);
+    }
+    return modelTags;
 }
