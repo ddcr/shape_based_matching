@@ -39,7 +39,14 @@ struct Template
 
     float sscale;
     float orientation;
+
+    // int modelID;
+    // std::string model_src;
+    // cv::Size modelImageSize;
+
+    // int tagFieldID;
     std::string fiducial_src;
+    // cv::Rect crop;
 
     void read(const cv::FileNode &fn);
     void write(cv::FileStorage &fs) const;
@@ -158,6 +165,10 @@ public:
     Detector(std::vector<int> T);
     Detector(int num_features, std::vector<int> T, float weak_thresh = 30.0f, float strong_thresh = 60.0f);
 
+    static Detector* getInstance(std::string path);
+
+    static Detector* getInstance();
+
     std::vector<Match> match(cv::Mat sources, float threshold,
                                                      const std::vector<std::string> &class_ids = std::vector<std::string>(),
                                                      const cv::Mat masks = cv::Mat()) const;
@@ -166,7 +177,12 @@ public:
                     const cv::Mat &object_mask,
                     float sscale = -1.0,
                     float orientation = -1.0,
-                    std::string fiducial_src = "",
+                    // int modelID = 0,
+                    // std::string model_src = "none",
+                    // cv::Size modelImageSize = cv::Size(),
+                    // int tagFieldID = 0,
+                    std::string fiducial_src = "none",
+                    // cv::Rect crop = cv::Rect(),
                     int num_features = 0);
 
     int addTemplate_rotate(const std::string &class_id, int zero_id, float theta, cv::Point2f center);
@@ -213,6 +229,7 @@ protected:
                                     float threshold, std::vector<Match> &matches,
                                     const std::string &class_id,
                                     const std::vector<TemplatePyramid> &template_pyramids) const;
+    static Detector* instance;
 };
 
 // TODO (DDCR): adjust static as necessary (one of the tests requires the removal of the keyword static).

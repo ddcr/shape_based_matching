@@ -15,6 +15,100 @@
 using namespace cv;
 using namespace std;
 
+cv::Mat getImage(std::string parImagePath)
+{
+    cv::Mat img = cv::imread(parImagePath);
+    if (img.empty())
+    {
+        std::string error_msg = "[ERROR] Error when loading image " + parImagePath + "!";
+        throw std::runtime_error(error_msg);
+    }
+
+    return img;
+}
+
+cv::Size getImageSize(std::string parImagePath)
+{
+    cv::Mat img = cv::imread(parImagePath);
+    if (img.empty())
+    {
+        std::string error_msg = "[ERROR] Error when loading image " + parImagePath + "!";
+        throw std::runtime_error(error_msg);
+    }
+
+    return img.size();
+}
+
+BBox parsePositions(QString parStringPositions, cv::Size imgSz)
+{
+    QJsonParseError error;
+    QJsonDocument data = QJsonDocument::fromJson(parStringPositions.toUtf8(), &error);
+    QJsonObject obj = data.object();
+    if (obj.empty())
+        throw std::invalid_argument("BBox Json Empty!");
+
+    // maybe should be ceil() instead of int()
+    BBox b;
+    b.x = int(obj["X"].toString().toFloat() * imgSz.width);
+    b.y = int(obj["Y"].toString().toFloat() * imgSz.height);
+    b.width = int(obj["width"].toString().toFloat() * imgSz.width);
+    b.height = int(obj["height"].toString().toFloat() * imgSz.height);
+    b.x_pixels = obj["X_pixels"].toString().toInt();
+    b.y_pixels = obj["Y_pixels"].toString().toInt();
+    b.width_pixels = obj["width_pixels"].toString().toInt();
+    b.height_pixels = obj["height_pixels"].toString().toInt();
+    b.w_image = obj["w_image"].toString().toInt();
+    b.h_image = obj["h_image"].toString().toInt();
+
+    return b;
+}
+
+std::vector<ModelTag> extractTagModelFiducialsFromDB()
+{
+    std::vector<ModelTag> modelTags;
+
+    DAOWrapper* daoWrapper;
+    daoWrapper = DAOWrapper::getInstance();
+
+    QVector<TagModel> tagModels = daoWrapper->getAllTagModels();
+
+    foreach (TagModel tagModel, tagModels)
+    {
+        ModelTag modelTag;
+        modelTag.modelID = tagModel.tagModelID;
+        modelTag.modelFileName = tagModel.refImageURL.toStdString();
+        modelTag.imageSize = getImageSize(modelTag.modelFileName);
+        modelTag.modelName = tagModel.name.toStdString();
+        foreach (TagModelField tagModelField, tagModel.tagFields)
+        {
+            TagField tagField = daoWrapper->getTagField(tagModelField.tagFieldID);
+
+            if (tagField.tagFieldTypeID == 3)
+            {
+                BBox box = parsePositions(tagModelField.geometricalInfo, modelTag.imageSize);
+
+                if (box.x >= 0 && box.y >= 0 && box.x + box.width <= modelTag.imageSize.width && box.y + box.height <= modelTag.imageSize.height)
+                {
+                    // The crop is within the image bounds
+                    cv::Rect crop(box.x, box.y, box.width, box.height);
+                    modelTag.crops.push_back({tagField.tagFieldID, crop});
+                }
+                else
+                {
+                    QString fiducialPosError = QString("A posição do fiducial '%1' do modelo '%2' está incorreta. Favor corrigir o banco de templates.")\
+                        .arg(tagField.name)\
+                        .arg(QString::fromStdString(modelTag.modelName));
+                    throw std::invalid_argument(fiducialPosError.toStdString());
+                }
+            }
+        }
+
+        if (modelTag.crops.size() > 0)
+            modelTags.push_back(modelTag);
+    }
+    return modelTags;
+}
+
 static inline int myGetLabel(int quantized)
 {
   switch (quantized)
@@ -57,6 +151,38 @@ cv::Mat displayQuantized(const Mat& quantized)
         }
     }
     return dst;
+}
+
+void rotateScaleImage(cv::Mat &img, float scale, float angle)
+{
+    if (std::abs(scale-1.0) > FLT_EPSILON)
+    {
+        cv::resize(img, img, cv::Size(), scale, scale);
+    }
+
+    int rotation_angle = static_cast<int>(angle);
+    cv::RotateFlags flag;
+    if(rotation_angle == 90 || rotation_angle == -270)
+    {
+        // Rotate clockwise 90 degrees
+        flag = cv::ROTATE_90_CLOCKWISE;
+    }
+    else if(rotation_angle == 270 || rotation_angle == -90)
+    {
+        // Rotate clockwise 270 degrees
+        flag = cv::ROTATE_90_COUNTERCLOCKWISE;
+    }
+    else if(rotation_angle == 180 || rotation_angle == -180)
+    {
+        // Rotate clockwise 180 degrees
+        flag = cv::ROTATE_180;
+    }
+    else
+    {
+        return;
+    }
+
+    cv::rotate(img, img, flag);
 }
 
 cv::Mat extractFiducialImg(
@@ -123,7 +249,6 @@ int showQuantization(const cv::Mat& img, line2Dup::Detector detector, std::strin
     return cv::waitKey(0);
 }
 
-#if 1
 void showIndividualMatchings(const cv::Mat& img_roi, const cv::Mat& imgfid_roi,
                             float similarity, std::string modelName,
                             std::vector<std::string>& extraInfo, int index_plot)
@@ -226,111 +351,6 @@ int showAllMatchings(const cv::Mat& img,
 
     return cv::waitKey(0);
 }
-#else
-int showMatchings(const cv::Mat& img, const std::vector<line2Dup::Match>& matches, const std::vector<int>& indices,
-    const std::map<std::string, cv::Mat>& matched_fiducials,
-    line2Dup::Detector detector, std::string windowLabel)
-{
-    cv::Mat img_show = img.clone();
-    int icnt = 0;
-    int ncolumns = 3;
-    for (auto idx: indices)
-    {
-        auto match = matches[idx];
-        auto templ = detector.getTemplates(match.class_id, match.template_id);
-
-        // 1.1 Extract matched ROI
-        cv::Rect templ_roi = cv::Rect(match.x, match.y, templ[0].width, templ[0].height);
-        cv::Mat img_roi = img(templ_roi).clone();
-        cv::Mat img_roi_gray;
-        cv::cvtColor(img_roi, img_roi_gray, cv::COLOR_BGR2GRAY);
-
-        // 1.2 extract fiducial with model name imprinted
-        cv::Mat img_fiducial = extractFiducialImg(matched_fiducials, templ[0]);
-
-        // 1.3 Add cropping of img_fiducial as well
-        cv::Mat img_fiducial_crop = img_fiducial(
-            cv::Rect(templ[0].tl_x, templ[0].tl_y, templ[0].width, templ[0].height)
-        ).clone();
-
-        // ================================== SHOW ROI AND FIDUCIAL SIDE BY SIDE ==================================
-        cv::Mat frame;
-        std::vector<cv::Mat> images = {img_roi_gray, img_fiducial_crop, img_fiducial};
-        int max_height = std::max(img_roi_gray.rows, img_fiducial.rows);
-        int padding = 5;
-
-        for (const cv::Mat& img : images)
-        {
-            int top = 0, bottom = 0;
-            if (img.rows < max_height)
-            {
-                top = (max_height - img.rows) / 2;
-                bottom = max_height - img.rows - top;
-            }
-            cv::Mat padded_img;
-            cv::copyMakeBorder(img, padded_img, top + padding, bottom + padding,
-                padding, padding, cv::BORDER_CONSTANT);
-            if (frame.empty())
-                frame = padded_img;
-            else cv::hconcat(frame, padded_img, frame);
-        }
-
-        std::string windowId = to_string(idx);
-        std::string windowIdTitle = to_string(match.template_id)
-                        + "/" + to_string(int(templ[0].orientation))
-                        + "/" + to_string(int(round(match.similarity)));
-        cv::namedWindow(windowId, WINDOW_AUTOSIZE);
-        int row = icnt / ncolumns;
-        int col = icnt % ncolumns;
-        cv::moveWindow(windowId, col*500+100, row*200+100);
-        cv::setWindowTitle(windowId, windowIdTitle);
-        cv::imshow(windowId, frame);
-        // ================================== SHOW ROI AND FIDUCIAL SIDE BY SIDE ==================================
-
-        // templ[0] == base of pyramid
-        int x = templ[0].width + match.x;
-        int y = templ[0].height + match.y;
-        int r = templ[0].width/2;
-
-        // cv::Vec3b randColor = {rand()%155+100, rand()%155+100, rand()%155+100};
-        cv::Vec3b randColor = {255, 0, 0};
-
-        for(int i = 0; i < templ[0].features.size(); i++){
-            auto feat = templ[0].features[i];
-            cv::circle(img_show, {feat.x + match.x, feat.y + match.y}, 2, randColor, -1);
-        }
-
-        //  log to stdout
-        std::stringstream log_t, sscale_t;
-        sscale_t.precision(2);
-        sscale_t << templ[0].sscale;
-        log_t << "Box " << to_string(match.template_id) << " : "
-                << "[" << templ[0].fiducial_src << "], "
-                << "(" << int(templ[0].orientation) << ", " << sscale_t.str() << "), sim="
-                << to_string(int(round(match.similarity)))
-                << "..."
-                << templ_roi
-                << " -- "
-                << img_fiducial.size();
-        std::cout << log_t.str() << std::endl;
-
-        // Box
-        cv::rectangle(img_show, {match.x, match.y}, {x, y}, randColor, 2);
-        cv::putText(
-            img_show,
-            to_string(match.template_id), cv::Point(match.x+r-10, match.y-3),
-            cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
-        );
-        icnt++;
-    }
-
-    cv::namedWindow(windowLabel);
-    cv::moveWindow(windowLabel, 610, 250);
-    cv::imshow(windowLabel, img_show);
-
-    return cv::waitKey(0);
-}
-#endif
 
 std::vector<double> calcHistogram(const cv::Mat1b& img, int histSize)
 {
@@ -450,87 +470,4 @@ std::pair<cv::Scalar, cv::Mat> evalSSIM(const cv::Mat& img1_in, const cv::Mat& i
 
 	const cv::Scalar mssim = cv::mean(ssim_map);
 	return {mssim, std::move(ssim_map)};
-}
-
-// =================================================================================
-
-cv::Size getImageSize(std::string parImagePath)
-{
-    cv::Mat img = cv::imread(parImagePath);
-    if (img.empty())
-    {
-        std::string error_msg = "[ERROR] Error when loading image " + parImagePath + "!";
-        throw std::runtime_error(error_msg);
-    }
-
-    return img.size();
-}
-
-BBox parsePositions(QString parStringPositions, cv::Size imgSz)
-{
-    QJsonParseError error;
-    QJsonDocument data = QJsonDocument::fromJson(parStringPositions.toUtf8(), &error);
-    QJsonObject obj = data.object();
-    if (obj.empty())
-        throw std::invalid_argument("BBox Json Empty!");
-
-    BBox b;
-    b.x = int(obj["X"].toString().toFloat() * imgSz.width);
-    b.y = int(obj["Y"].toString().toFloat() * imgSz.height);
-    b.width = int(obj["width"].toString().toFloat() * imgSz.width);
-    b.height = int(obj["height"].toString().toFloat() * imgSz.height);
-    b.x_pixels = obj["X_pixels"].toString().toInt();
-    b.y_pixels = obj["Y_pixels"].toString().toInt();
-    b.width_pixels = obj["width_pixels"].toString().toInt();
-    b.height_pixels = obj["height_pixels"].toString().toInt();
-    b.w_image = obj["w_image"].toString().toInt();
-    b.h_image = obj["h_image"].toString().toInt();
-
-    return b;
-}
-
-std::vector<ModelTag> extractTagModelFiducialsFromDB()
-{
-    std::vector<ModelTag> modelTags;
-
-    DAOWrapper* daoWrapper;
-    daoWrapper = DAOWrapper::getInstance();
-
-    QVector<TagModel> tagModels = daoWrapper->getAllTagModels();
-
-    foreach (TagModel tagModel, tagModels)
-    {
-        ModelTag modelTag;
-        modelTag.modelID = tagModel.tagModelID;
-        modelTag.modelFileName = tagModel.refImageURL.toStdString();
-        modelTag.imageSize = getImageSize(modelTag.modelFileName);
-        modelTag.modelName = tagModel.name.toStdString();
-        foreach (TagModelField tagModelField, tagModel.tagFields)
-        {
-            TagField tagField = daoWrapper->getTagField(tagModelField.tagFieldID);
-
-            if (tagField.tagFieldTypeID == 3)
-            {
-                BBox box = parsePositions(tagModelField.geometricalInfo, modelTag.imageSize);
-
-                if (box.x >= 0 && box.y >= 0 && box.x + box.width <= modelTag.imageSize.width && box.y + box.height <= modelTag.imageSize.height)
-                {
-                    // The crop is within the image bounds
-                    cv::Rect crop(box.x, box.y, box.width, box.height);
-                    modelTag.crops.push_back(crop);
-                }
-                else
-                {
-                    QString fiducialPosError = QString("A posição do fiducial '%1' do modelo '%2' está incorreta. Favor corrigir o banco de templates.")\
-                        .arg(tagField.name)\
-                        .arg(QString::fromStdString(modelTag.modelName));
-                    throw std::invalid_argument(fiducialPosError.toStdString());
-                }
-            }
-        }
-
-        if (modelTag.crops.size() > 0)
-            modelTags.push_back(modelTag);
-    }
-    return modelTags;
 }

@@ -32,6 +32,9 @@ private:
 };
 
 cv::Mat displayQuantized(const cv::Mat& quantized);
+
+void rotateScaleImage(cv::Mat &img, float scale, float angle);
+
 cv::Mat extractFiducialImg(
     const std::map<std::string,cv::Mat>& matched_fiducials,
     const line2Dup::Template& templ
@@ -55,6 +58,8 @@ std::pair<cv::Scalar, cv::Mat> evalSSIM(const cv::Mat& img1_in, const cv::Mat& i
 
 // =================================================================================
 
+cv::Mat getImage(std::string parImagePath);
+cv::Size getImageSize(std::string parImagePath);
 BBox parsePositions(QString parStringPositions, cv::Size imgSz);
 std::vector<ModelTag> extractTagModelFiducialsFromDB();
 

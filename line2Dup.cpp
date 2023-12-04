@@ -1,8 +1,12 @@
 #include "line2Dup.h"
 #include <iostream>
+#include <experimental/filesystem>
 
 using namespace std;
 using namespace cv;
+namespace fs = std::experimental::filesystem;
+
+#define PATCH_2843 0
 
 #include <chrono>
 class Timer
@@ -77,7 +81,18 @@ void Template::read(const FileNode &fn)
 
     sscale = fn["scale"];
     orientation = fn["orientation"];
+
+    // modelID = fn["modelID"];
+    // fn["model_src"] >> model_src;
+    // std::vector<int> size;
+    // fn["modelImageSize"] >> size;
+    // modelImageSize = cv::Size(size[0], size[1]);
+
+    // tagFieldID = fn["tagFieldID"];
     fn["fiducial_src"] >> fiducial_src;
+    // std::vector<int> rect;
+    // fn["crop"] >> rect;
+    // crop = cv::Rect(rect[0], rect[1], rect[2], rect[3]);
 
     pyramid_level = fn["pyramid_level"];
 
@@ -99,7 +114,14 @@ void Template::write(FileStorage &fs) const
 
     fs << "scale" << sscale;
     fs << "orientation" << orientation;
+
+    // fs << "modelID" << modelID;
+    // fs << "model_src" << model_src;
+    // fs << "modelImageSize" << modelImageSize;
+
+    // fs << "tagFieldID" << tagFieldID;
     fs << "fiducial_src" << fiducial_src;
+    // fs << "crop" << crop;
 
     fs << "pyramid_level" << pyramid_level;
 
@@ -236,12 +258,23 @@ void hysteresisGradient(Mat &magnitude, Mat &quantized_angle,
     }
 
     // Mask 16 buckets into 8 quantized orientations
+#if PATCH_2843
+    // Linemod ColorGradientPyramid Algorithm Issue #2843
+    // https://github.com/opencv/opencv_contrib/issues/2843
+#endif
     for (int r = 1; r < angle.rows - 1; ++r)
     {
         uchar *quant_r = quantized_unfiltered.ptr<uchar>(r);
+#if PATCH_2843
+        float* mag_row = magnitude.ptr<float>(r); // THIS IS ADDED
+#endif
         for (int c = 1; c < angle.cols - 1; ++c)
         {
             quant_r[c] &= 7;
+#if PATCH_2843
+            // If magnitude is less than the threshold, project past 8
+            quant_r[c] |= (mag_row[c] <= threshold) << 3; // THIS IS ADDED
+#endif
         }
     }
 
@@ -257,7 +290,11 @@ void hysteresisGradient(Mat &magnitude, Mat &quantized_angle,
             if (mag_r[c] > threshold)
             {
                 // Compute histogram of quantized bins in 3x3 patch around pixel
+#if PATCH_2843
+                int histogram[15] = {0}; // THIS IS CHANGED
+#else
                 int histogram[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+#endif
 
                 uchar *patch3x3_row = &quantized_unfiltered(r - 1, c - 1);
                 histogram[patch3x3_row[0]]++;
@@ -1068,6 +1105,8 @@ static void similarityLocal_64(const std::vector<Mat> &linear_memories, const Te
 *                                                             High-level Detector API                                                                    *
 \****************************************************************************************/
 
+Detector* Detector::instance = nullptr;
+
 Detector::Detector()
 {
     this->modality = makePtr<ColorGradient>();
@@ -1315,7 +1354,12 @@ int Detector::addTemplate(const Mat source, const std::string &class_id,
                           const Mat &object_mask,
                           float sscale,
                           float orientation,
+                        //   int modelID,
+                        //   std::string model_src,
+                        //   cv::Size modelImageSize,
+                        //   int tagFieldID,
                           std::string fiducial_src,
+                        //   cv::Rect crop,
                           int num_features)
 {
     std::vector<TemplatePyramid> &template_pyramids = class_templates[class_id];
@@ -1340,7 +1384,15 @@ int Detector::addTemplate(const Mat source, const std::string &class_id,
             bool success = qp->extractTemplate(tp[l]);
             tp[l].sscale = sscale;
             tp[l].orientation = orientation;
+
+            // tp[l].modelID = modelID;
+            // tp[l].model_src = model_src;
+            // tp[l].modelImageSize = modelImageSize;
+
+            // tp[l].tagFieldID = tagFieldID;
+            // tp[l].crop = crop;
             tp[l].fiducial_src = fiducial_src;
+
             if (!success)
                 return -1;
         }
@@ -1352,6 +1404,46 @@ int Detector::addTemplate(const Mat source, const std::string &class_id,
     /// @todo Can probably avoid a copy of tp here with swap
     template_pyramids.push_back(tp);
     return template_id;
+}
+
+Detector* Detector::getInstance()
+{
+    if(!Detector::instance)
+    {
+        std::string current_path = fs::current_path().string();
+        std::cout << "Loading LINE-MOD settings ..." << std::endl;
+        Detector::instance = Detector::getInstance(current_path+"/detector_linemod.yaml");
+    }
+    return Detector::instance;
+}
+
+Detector* Detector::getInstance(std::string path)
+{
+    fs::path path_p(path);
+    if (!fs::is_regular_file(path_p))
+    {
+        std::cout << "LINEMOD configuration file (" << path << ") not found!" << std::endl;
+        throw std::exception();
+    }
+
+    if (!Detector::instance)
+    {
+        Detector::instance = new Detector();
+
+        cv::FileStorage fs(path, cv::FileStorage::READ);
+        Detector::instance->read(fs.root());
+
+        std::vector<std::string> ids;
+        cv::FileNode classes_fn = fs["classes"];
+        cv::FileNodeIterator it = classes_fn.begin(), it_end = classes_fn.end();
+        for (; it != it_end; ++it)
+        {
+            ids.push_back((std::string)*it);
+        }
+        std::string templates_dir = fs["templates_dir"];
+        Detector::instance->readClasses(ids, templates_dir + "/%s.yaml.gz");
+    }
+    return Detector::instance;
 }
 
 static cv::Point2f rotate2d(const cv::Point2f inPoint, const double angRad)
@@ -1455,6 +1547,7 @@ void Detector::read(const FileNode &fn)
     fn["T"] >> T_at_level;
 
     modality = makePtr<ColorGradient>();
+    modality->read(fn);
 }
 
 void Detector::write(FileStorage &fs) const
