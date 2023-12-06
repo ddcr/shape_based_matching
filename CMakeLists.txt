@@ -41,7 +41,7 @@ include_directories(${OpenCV_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS} ${Qt5Core_INCLU
 # include MIPP headers
 include_directories (${INCLUDE_DIRECTORIES} "${CMAKE_CURRENT_SOURCE_DIR}/MIPP/")
 
-
+# The linking of libPersistence.a with Qt libraries has already been done.
 add_executable(
     ${PROJECT_NAME}_test
     nms.hpp
@@ -59,10 +59,16 @@ add_executable(
 )
 target_link_libraries(${PROJECT_NAME}_test_old ${OpenCV_LIBS} ${Boost_LIBRARIES} Persistence stdc++fs csv)
 
+# add_executable(
+#     SSIM
+#     SSIM.cpp
+# )
+# target_link_libraries(SSIM ${OpenCV_LIBS} stdc++fs)
+
 add_executable(
-    SSIM
-    SSIM.cpp
+    test_scalrot
+    test_scalrot.cpp
 )
-target_link_libraries(SSIM ${OpenCV_LIBS} stdc++fs)
+target_link_libraries(test_scalrot ${OpenCV_LIBS} ${Boost_LIBRARIES} Persistence stdc++fs)
 
 file(COPY model_images DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")

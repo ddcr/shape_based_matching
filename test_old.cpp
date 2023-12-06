@@ -8,6 +8,9 @@
 
 using namespace cv;
 static std::string PREFIX_PATH = "/home/ivision/jabil_tag_reader/dev_area/jabil_dev_phase4";
+
+#if GRAD_DEBUG
+// remember to change "#define STATIC" in line2Dup.h
 void jabil_test1()
 {
     int num_feature = 150;
@@ -107,6 +110,7 @@ void jabil_test1()
 
     }
 }
+#endif
 
 void jabil_match()
 {

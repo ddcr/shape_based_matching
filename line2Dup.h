@@ -10,6 +10,106 @@
 
 #include "mipp.h"  // for SIMD in different platforms
 
+#include "csv.hpp"
+#include <chrono>
+class Timer
+{
+public:
+    Timer() : beg_(clock_::now())
+    {
+    }
+    void reset()
+    {
+        beg_ = clock_::now();
+    }
+    double elapsed() const
+    {
+        return std::chrono::duration_cast<second_>(clock_::now() - beg_).count();
+    }
+    double out(std::string message = "")
+    {
+        double t = elapsed();
+        // std::cout << message << "\nelasped time:" << t << "s\n" << std::endl;
+        std::cout << message << ":" << t << " ms" << std::endl;
+        reset();
+        return t;
+    }
+    void record(std::string message = "")
+    {
+        if (str_time_map.find(message) == str_time_map.end())
+        {
+            str_time_map[message] = elapsed();
+        }
+        else
+        {
+            str_time_map[message] += elapsed();
+        }
+        reset();
+    }
+    void display(std::string message = "")
+    {
+        if (message == "")
+        {
+            for (auto item : str_time_map)
+            {
+                std::cout << item.first << ":" << item.second << " ms\n" << std::endl;
+            }
+        }
+        else
+        {
+            std::cout << message << ":" << str_time_map[message] << " ms\n" << std::endl;
+        }
+    }
+    std::stringstream displayCSV(std::string first_column = "")
+    {
+        std::stringstream ss;
+        auto timings = csv::make_tsv_writer(ss);
+        std::vector<float> t1;
+        for (auto item: str_time_map)
+        {
+            t1.push_back(item.second);
+        }
+        timings << t1;
+        return ss;
+    }
+    std::stringstream displayCSV(std::vector<std::string> keys, std::string first_column = "")
+    {
+        std::stringstream ss;
+        auto timings = csv::make_csv_writer(ss);
+        // csv::DelimWriter<std::stringstream, ',', '"', 0> timings(ss);
+        // csv::set_decimal_places(2);
+
+        std::vector<std::string> t1;
+        if (!first_column.empty())
+        {
+            t1.push_back(first_column);
+        }
+
+
+        for (auto k: keys)
+        {
+            t1.push_back(csv::internals::to_string(str_time_map[k]));
+        }
+
+        timings << t1;
+        return ss;
+    }
+
+private:
+    typedef std::chrono::high_resolution_clock clock_;
+    // typedef std::chrono::duration<double, std::ratio<1>> second_;
+    typedef std::chrono::duration<double, std::milli> second_;
+    std::chrono::time_point<clock_> beg_;
+    std::map<std::string, double> str_time_map;
+};
+
+class ScopeTimer: public Timer
+{
+    ScopeTimer(std::string out_str_): out_str(out_str_){}
+    ~ScopeTimer(){out(out_str);}
+    std::string out_str;
+};
+
 namespace line2Dup
 {
 
@@ -233,11 +333,11 @@ protected:
 };
 
 // TODO (DDCR): adjust static as necessary (one of the tests requires the removal of the keyword static).
-// #define STATIC_IF static
-#define STATIC_IF
+#define STATIC_IF static
+// #define STATIC_IF
 
-STATIC_IF void spread(const cv::Mat &src, cv::Mat &dst, int T);
-STATIC_IF void computeResponseMaps(const cv::Mat &src, std::vector<cv::Mat> &response_maps);
+// STATIC_IF void spread(const cv::Mat &src, cv::Mat &dst, int T);
+// STATIC_IF void computeResponseMaps(const cv::Mat &src, std::vector<cv::Mat> &response_maps);
 
 } // namespace line2Dup
 

@@ -1,6 +1,7 @@
 #ifndef UTILS_H
 #define UTILS_H
 
+#include "line2Dup.h"
 #include "common_structs.hpp"
 #include <QString>
 #include <opencv2/core/core.hpp>
@@ -9,27 +10,6 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
-
-class Timer
-{
-public:
-    Timer() : beg_(clock_::now()) {}
-    void reset() { beg_ = clock_::now(); }
-    double elapsed() const
-    {
-        return std::chrono::duration_cast<second_> (clock_::now() - beg_).count();
-    }
-    void out(std::string message = "")
-    {
-        double t = elapsed();
-        std::cout << message << " >>> elapsed time: " << t << " ms" << std::endl;
-        reset();
-    }
-private:
-    typedef std::chrono::high_resolution_clock clock_;
-    typedef std::chrono::duration<double, std::milli> second_;
-    std::chrono::time_point<clock_> beg_;
-};
 
 cv::Mat displayQuantized(const cv::Mat& quantized);
 
