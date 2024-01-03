@@ -119,14 +119,12 @@ void createLinemod2DTemplates(float weak_thresh, float strong_thresh, int num_fe
 }
 
 // detectTagTypeLinemod
-std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv::Mat& img, std::ofstream& outfile)
+std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv::Mat& img, std::ofstream& outfile, const bool& img_dbg)
 {
     Timer timer;
     line2Dup::Detector *detector = line2Dup::Detector::getInstance();
 
-#if IMAGES_DBG
     DAOWrapper* daoWrapper = DAOWrapper::getInstance();
-#endif
 
     std::vector<string> class_ids = detector->classIds();
     auto matches = detector->match(img, DET_THRESHOLD, class_ids);
@@ -155,9 +153,8 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
     // (2) Filter false positives, comparing detected ROIs with fiducial markers from DB
     // (2.1) retrieve images of fiducial markers
     int imatch = 0;
-#if IMAGES_DBG
     cv::Mat img_show = img.clone();
-#endif
+
     for (auto idx: indices)
     {
         auto match = matches[idx];
@@ -178,61 +175,64 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
         ).clone();
 
         double hcorr = -1.0;
-#if IMAGES_DBG
-        // draw ROI and features onto img_show
-        int x = templ[0].width + match.x;
-        int y = templ[0].height + match.y;
-        int r = templ[0].width/2;
+        if(img_dbg)
+        {
+            // draw ROI and features onto img_show
+            int x = templ[0].width + match.x;
+            int y = templ[0].height + match.y;
+            int r = templ[0].width/2;
 
-        cv::Vec3b randColor = {255, 0, 0};
+            cv::Vec3b randColor = {255, 0, 0};
 
-        for(int i = 0; i < templ[0].features.size(); i++){
-            auto feat = templ[0].features[i];
-            cv::circle(img_show, {feat.x + match.x, feat.y + match.y}, 2, randColor, -1);
+            for(int i = 0; i < templ[0].features.size(); i++){
+                auto feat = templ[0].features[i];
+                cv::circle(img_show, {feat.x + match.x, feat.y + match.y}, 2, randColor, -1);
+            }
+
+            // Box
+            cv::rectangle(img_show, {match.x, match.y}, {x, y}, randColor, 2);
+            cv::putText(
+                img_show,
+                to_string(match.template_id), cv::Point(match.x+r-10, match.y-3),
+                cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
+            );
+
+            // TODO: avoid calling DAO in the future
+            TagModel tagModel = daoWrapper->getTagModel(stoi(match.class_id));
+
+            std::stringstream sscale_t, similarity_t, hcorr_t;
+            sscale_t.precision(2);
+            similarity_t.precision(2);
+            hcorr_t.precision(2);
+            sscale_t << templ[0].sscale;
+            similarity_t << match.similarity;
+            hcorr_t << hcorr;
+            std::vector<std::string> extraInfo = {
+                "Box: " + to_string(match.template_id),
+                "Scal/Orient: " + sscale_t.str() + ", " + to_string(int(templ[0].orientation)),
+                "Sim: " + similarity_t.str() + ", Filter Corr: " + hcorr_t.str()
+            };
+            showIndividualMatchings(img_roi_gray, tagFieldImageCropped, match.similarity,
+                                    tagModel.name.toStdString(),
+                                    extraInfo, imatch);
         }
-
-        // Box
-        cv::rectangle(img_show, {match.x, match.y}, {x, y}, randColor, 2);
-        cv::putText(
-            img_show,
-            to_string(match.template_id), cv::Point(match.x+r-10, match.y-3),
-            cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
-        );
-
-        // TODO: avoid calling DAO in the future
-        TagModel tagModel = daoWrapper->getTagModel(stoi(match.class_id));
-
-        std::stringstream sscale_t, similarity_t, hcorr_t;
-        sscale_t.precision(2);
-        similarity_t.precision(2);
-        hcorr_t.precision(2);
-        sscale_t << templ[0].sscale;
-        similarity_t << match.similarity;
-        hcorr_t << hcorr;
-        std::vector<std::string> extraInfo = {
-            "Box: " + to_string(match.template_id),
-            "Scal/Orient: " + sscale_t.str() + ", " + to_string(int(templ[0].orientation)),
-            "Sim: " + similarity_t.str() + ", Filter Corr: " + hcorr_t.str()
-        };
-        showIndividualMatchings(img_roi_gray, tagFieldImageCropped, match.similarity,
-                                tagModel.name.toStdString(),
-                                extraInfo, imatch);
-#endif
         imatch++;
     }
     timer.record("HCORR");
 
-#if IMAGES_DBG
-    cv::namedWindow(filename);
-    cv::moveWindow(filename, 680, 400);
-    cv::imshow(filename, img_show);
-    int key = cv::waitKey(0);
-    if (key == 113)
+    if (img_dbg)
     {
-        exit(1);
+        cv::namedWindow(filename);
+        cv::moveWindow(filename, 680, 400);
+        cv::imshow(filename, img_show);
+        int key = cv::waitKey(0);
+        if (key == 113)
+        {
+            exit(1);
+        }
+        cv::destroyAllWindows();
     }
-    cv::destroyAllWindows();
-#endif
+
 
     std::stringstream ss = timer.displayCSV({"MATCH", "NMS", "HCORR"}, filename);
     std::cout << ss.str();
@@ -244,7 +244,7 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
     return {0, 0};
 }
 
-void jabil_read_all_templates_and_match(std::string testdir)
+void jabil_read_all_templates_and_match(std::string testdir, const bool& img_dbg)
 {
     fs::path path_test_images = fs::canonical(
         "../../../inspection_images/2023-07-27/JabilCam-modelos/tag_candidate/" + testdir
@@ -281,7 +281,7 @@ void jabil_read_all_templates_and_match(std::string testdir)
         cv::Rect roi(0, 0, stride*m , stride*n);
         cv::Mat img = img_orig(roi).clone();
 
-        std::pair<int, int> matchingResult = detectTemplateLinemod(f.filename(), img, mycsv);
+        std::pair<int, int> matchingResult = detectTemplateLinemod(f.filename(), img, mycsv, img_dbg);
     }
 }
 
@@ -289,7 +289,7 @@ int main(int argc, const char** argv)
 {
     float weak_threshold, strong_threshold;
     int num_features;
-    bool create_templates, create_templates_only;
+    bool create_templates, create_templates_only, debug;
     boost::program_options::options_description desc("Allowed options");
 
     desc.add_options()
@@ -317,6 +317,11 @@ int main(int argc, const char** argv)
             "create_template_only,k",
             boost::program_options::value<bool>(&create_templates_only)->default_value(false),
             "Create templates only?"
+        )
+        (
+            "debug,v",
+            boost::program_options::value<bool>(&debug)->default_value(false),
+            "Debug with images"
         )
         (
             "testdir,t",
@@ -351,6 +356,7 @@ int main(int argc, const char** argv)
     std::cout << "Number of features: " << num_features << std::endl;
     std::cout << "Create templates? " << create_templates << std::endl;
     std::cout << "Test directory: " << testdir << std::endl;
+    std::cout << "Debug (images): " << debug << std::endl;
 
     if(create_templates_only)
     {
@@ -362,7 +368,7 @@ int main(int argc, const char** argv)
         {
             createLinemod2DTemplates(weak_threshold, strong_threshold, num_features);
         }
-        jabil_read_all_templates_and_match(testdir);
+        jabil_read_all_templates_and_match(testdir, debug);
     }
 
     return 0;
