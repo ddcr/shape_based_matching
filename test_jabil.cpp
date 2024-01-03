@@ -124,7 +124,8 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
     Timer timer;
     line2Dup::Detector *detector = line2Dup::Detector::getInstance();
 
-    DAOWrapper* daoWrapper = DAOWrapper::getInstance();
+    // Extract all models
+    std::vector<ModelTag> modelTags = extractTagModelFiducialsFromDB();
 
     std::vector<string> class_ids = detector->classIds();
     auto matches = detector->match(img, DET_THRESHOLD, class_ids);
@@ -159,24 +160,39 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
     {
         auto match = matches[idx];
         auto templ = detector->getTemplates(match.class_id, match.template_id);
+        int modelID = stoi(match.class_id);
 
-        // extract candidate ROI from img
-        cv::Rect templ_roi = cv::Rect(match.x, match.y, templ[0].width, templ[0].height);
-        cv::Mat img_roi = img(templ_roi).clone();
-        cv::Mat1b img_roi_gray;
-        cv::cvtColor(img_roi, img_roi_gray, cv::COLOR_BGR2GRAY);
+        auto modelTag = std::find_if(std::begin(modelTags), std::end(modelTags),
+                                    [modelID](const ModelTag &mt)
+                                    {
+                                        return mt.modelID == modelID;
+                                    });
+        if (modelTag == std::end(modelTags))
+        {
+            std::cout << "Model '" << match.class_id << "' non-existent" << std::endl;
+            break;
+        }
 
-        // extract fiducial marker source image; rotate and crop to ROI size according
-        // to template
-        cv::Mat tagFieldImage = cv::imread(templ[0].fiducial_src, cv::IMREAD_GRAYSCALE);
-        rotateScaleImage(tagFieldImage, templ[0].sscale, templ[0].orientation);
-        cv::Mat tagFieldImageCropped = tagFieldImage(
-            cv::Rect(templ[0].tl_x, templ[0].tl_y, templ[0].width, templ[0].height)
-        ).clone();
-
-        double hcorr = -1.0;
         if(img_dbg)
         {
+            double hcorr = -1.0;
+
+            // extract candidate ROI from img (convertion to grayscale if template matching is used)
+            cv::Rect templ_roi = cv::Rect(match.x, match.y, templ[0].width, templ[0].height);
+            cv::Mat img_roi = img(templ_roi).clone();
+            cv::Mat1b img_roi_gray;
+            cv::cvtColor(img_roi, img_roi_gray, cv::COLOR_BGR2GRAY);
+
+            // TODO: In future avoid reading from disk
+            // extract fiducial marker source image; rotate and crop to ROI size according
+            // to template
+            cv::Mat tagFieldImage = cv::imread(templ[0].fiducial_src, cv::IMREAD_GRAYSCALE);
+            rotateScaleImage(tagFieldImage, templ[0].sscale, templ[0].orientation);
+
+            cv::Mat tagFieldImageCropped = tagFieldImage(
+                cv::Rect(templ[0].tl_x, templ[0].tl_y, templ[0].width, templ[0].height)
+            ).clone();
+
             // draw ROI and features onto img_show
             int x = templ[0].width + match.x;
             int y = templ[0].height + match.y;
@@ -189,7 +205,7 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
                 cv::circle(img_show, {feat.x + match.x, feat.y + match.y}, 2, randColor, -1);
             }
 
-            // Box
+            // Detected box in image
             cv::rectangle(img_show, {match.x, match.y}, {x, y}, randColor, 2);
             cv::putText(
                 img_show,
@@ -197,9 +213,7 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
                 cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
             );
 
-            // TODO: avoid calling DAO in the future
-            TagModel tagModel = daoWrapper->getTagModel(stoi(match.class_id));
-
+            // Text information
             std::stringstream sscale_t, similarity_t, hcorr_t;
             sscale_t.precision(2);
             similarity_t.precision(2);
@@ -212,8 +226,9 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
                 "Scal/Orient: " + sscale_t.str() + ", " + to_string(int(templ[0].orientation)),
                 "Sim: " + similarity_t.str() + ", Filter Corr: " + hcorr_t.str()
             };
+
             showIndividualMatchings(img_roi_gray, tagFieldImageCropped, match.similarity,
-                                    tagModel.name.toStdString(),
+                                    modelTag->modelName,
                                     extraInfo, imatch);
         }
         imatch++;

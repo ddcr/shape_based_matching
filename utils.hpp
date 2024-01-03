@@ -15,6 +15,9 @@ cv::Mat displayQuantized(const cv::Mat& quantized);
 
 void rotateScaleImage(cv::Mat &img, float scale, float angle);
 
+cv::Rect rotateScaleRect(const cv::Rect inRect,
+        const double scale, const double angle, const cv::Size imgSize);
+
 cv::Mat extractFiducialImg(
     const std::map<std::string,cv::Mat>& matched_fiducials,
     const line2Dup::Template& templ

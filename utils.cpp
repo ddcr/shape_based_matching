@@ -91,6 +91,7 @@ std::vector<ModelTag> extractTagModelFiducialsFromDB()
                 {
                     // The crop is within the image bounds
                     cv::Rect crop(box.x, box.y, box.width, box.height);
+                    // modelTag.crops.push_back(crop);
                     modelTag.crops.push_back({tagField.tagFieldID, crop});
                 }
                 else
@@ -183,6 +184,53 @@ void rotateScaleImage(cv::Mat &img, float scale, float angle)
     }
 
     cv::rotate(img, img, flag);
+}
+
+cv::Rect rotateScaleRect(const cv::Rect inRect,
+        const double scale,
+        const double angle,
+        const cv::Size imgSize)
+{
+    cv::Mat hom_in = cv::Mat::ones(3, 1, CV_64F); // homogeneous coordinates
+    cv::Mat hom_rot;
+
+    cv::Mat rotMatrix = cv::getRotationMatrix2D(cv::Point2f(0.0f, 0.0f), -angle, scale);
+
+    // get image center
+    cv::Point2f centerRot(imgSize.width / 2.0f, imgSize.height / 2.0f);
+
+    // rotate top-left
+    auto tl = inRect.tl();
+    hom_in.at<double>(0, 0) = tl.x - centerRot.x;
+    hom_in.at<double>(1, 0) = tl.y - centerRot.y;
+    hom_rot = rotMatrix * hom_in;
+    cv::Point2f tl_rot(hom_rot.at<double>(0, 0), hom_rot.at<double>(1, 0));
+
+    // rotate bottom-right
+    auto br = inRect.br();
+    hom_in.at<double>(0, 0) = br.x - centerRot.x;
+    hom_in.at<double>(1, 0) = br.y - centerRot.y;
+    hom_rot = rotMatrix * hom_in;
+    cv::Point2f br_rot(hom_rot.at<double>(0, 0), hom_rot.at<double>(1, 0));
+
+    // new image center after rotation
+    // obs: note the special case of only multiples of 90)
+    cv::Point2f shiftScaled;
+    float r1 = fmod(angle, 360.0f);
+    float diff90 = std::abs(r1-90.0f);
+    float diff270 = std::abs(r1-270.0f);
+
+    if (diff90 <= FLT_EPSILON || diff270 <= FLT_EPSILON)
+    {
+        shiftScaled = cv::Point2f(imgSize.height / 2.0f, imgSize.width / 2.0f)*scale;
+    }
+    else
+    {
+        shiftScaled = centerRot*scale;
+    }
+
+    cv::Rect roi_rot(tl_rot + shiftScaled, br_rot + shiftScaled);
+    return roi_rot;
 }
 
 cv::Mat extractFiducialImg(
