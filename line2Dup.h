@@ -63,7 +63,7 @@ public:
     std::stringstream displayCSV(std::string first_column = "")
     {
         std::stringstream ss;
-        auto timings = csv::make_tsv_writer(ss);
+        auto timings = csv::make_csv_writer(ss);
         std::vector<float> t1;
         for (auto item: str_time_map)
         {
@@ -144,7 +144,7 @@ struct Template
     // std::string model_src;
     // cv::Size modelImageSize;
 
-    // int tagFieldID;
+    int tagFieldID;
     std::string fiducial_src;
     // cv::Rect crop;
 
@@ -280,7 +280,7 @@ public:
                     // int modelID = 0,
                     // std::string model_src = "none",
                     // cv::Size modelImageSize = cv::Size(),
-                    // int tagFieldID = 0,
+                    int tagFieldID = 0,
                     std::string fiducial_src = "none",
                     // cv::Rect crop = cv::Rect(),
                     int num_features = 0);
@@ -402,33 +402,6 @@ public:
             // cv::warpAffine(src, dst, rot_mat, src.size());
         }
         return dst;
-    }
-    static void save_infos(std::vector<shapeInfo_producer::Info>& infos, std::string path = "infos.yaml"){
-        cv::FileStorage fs(path, cv::FileStorage::WRITE);
-
-        fs << "infos"
-           << "[";
-        for (int i = 0; i < infos.size(); i++)
-        {
-            fs << "{";
-            fs << "angle" << infos[i].angle;
-            fs << "scale" << infos[i].scale;
-            fs << "}";
-        }
-        fs << "]";
-    }
-    static std::vector<Info> load_infos(std::string path = "info.yaml"){
-        cv::FileStorage fs(path, cv::FileStorage::READ);
-
-        std::vector<Info> infos;
-
-        cv::FileNode infos_fn = fs["infos"];
-        cv::FileNodeIterator it = infos_fn.begin(), it_end = infos_fn.end();
-        for (int i = 0; it != it_end; ++it, i++)
-        {
-            infos.emplace_back(float((*it)["angle"]), float((*it)["scale"]));
-        }
-        return infos;
     }
 
     void produce_infos(){

@@ -1,4 +1,4 @@
-// #include "csv.hpp"
+#include "csv.hpp"
 #include "utils.hpp"
 #include "nms.hpp"
 
@@ -20,7 +20,6 @@ using namespace cv;
 #define IMAGES_DBG 0
 
 namespace fs = std::experimental::filesystem;
-static std::string PREFIX_PATH = "/home/ivision/jabil_tag_reader/dev_area/jabil_dev_phase4";
 
 /**
  * \brief Detector Constructor.
@@ -76,10 +75,10 @@ void createLinemod2DTemplates(float weak_thresh, float strong_thresh, int num_fe
             fs::path modelFileNameFid_p = modelFileName_p.replace_filename(modelFileName_new);
             cv::imwrite(modelFileNameFid_p.string(), cropFidImage);
 
-            // create scale/orientation copies
+            // create scale/orientation copies of the fiducial image (not the tag image!)
             shape_based_matching::shapeInfo_producer fid_shapes(cropFidImage, cv::Mat());
-            fid_shapes.angle_range = {0, 270};
-            fid_shapes.angle_step = 90;
+            fid_shapes.angle_range = {0.0, 270.0};
+            fid_shapes.angle_step = 90.0;
 
             fid_shapes.scale_range = {SCALE_RANGE_MIN, SCALE_RANGE_MAX};
             fid_shapes.scale_step = SCALE_RANGE_STEP;
@@ -96,7 +95,7 @@ void createLinemod2DTemplates(float weak_thresh, float strong_thresh, int num_fe
                     // modelTag.modelID,
                     // modelTag.modelFileName,
                     // modelImage.size(),
-                    // tagFieldID,
+                    tagFieldID,
                     modelFileNameFid_p.string()
                     // cropFid
                 );
@@ -112,21 +111,20 @@ void createLinemod2DTemplates(float weak_thresh, float strong_thresh, int num_fe
     }
 
     // save line2Dup detector settings
-    cv::FileStorage fs(current_path + "/detector_linemod.yaml", cv::FileStorage::WRITE);
+    cv::FileStorage fs(current_path + "/model_images/detector_linemod.yaml", cv::FileStorage::WRITE);
     detector.write(fs);
     fs << "templates_dir" << "model_images";
     fs << "classes" << class_ids;
 }
 
 // detectTagTypeLinemod
-std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv::Mat& img, std::ofstream& outfile, const bool& img_dbg)
+std::pair<int, int> detectTemplateLinemod(const std::string& imgfile, const cv::Mat& img, std::ofstream& csvfile, const bool& img_dbg)
 {
-    Timer timer;
-    line2Dup::Detector *detector = line2Dup::Detector::getInstance();
-
     // Extract all models
     std::vector<ModelTag> modelTags = extractTagModelFiducialsFromDB();
+    line2Dup::Detector *detector = line2Dup::Detector::getInstance();
 
+    Timer timer;
     std::vector<string> class_ids = detector->classIds();
     auto matches = detector->match(img, DET_THRESHOLD, class_ids);
     timer.record("MATCH");
@@ -160,8 +158,8 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
     {
         auto match = matches[idx];
         auto templ = detector->getTemplates(match.class_id, match.template_id);
-        int modelID = stoi(match.class_id);
 
+        int modelID = stoi(match.class_id);
         auto modelTag = std::find_if(std::begin(modelTags), std::end(modelTags),
                                     [modelID](const ModelTag &mt)
                                     {
@@ -188,10 +186,29 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
             // to template
             cv::Mat tagFieldImage = cv::imread(templ[0].fiducial_src, cv::IMREAD_GRAYSCALE);
             rotateScaleImage(tagFieldImage, templ[0].sscale, templ[0].orientation);
-
             cv::Mat tagFieldImageCropped = tagFieldImage(
                 cv::Rect(templ[0].tl_x, templ[0].tl_y, templ[0].width, templ[0].height)
             ).clone();
+
+#if 1
+            // template matching
+            cv::Mat im1 = img_roi_gray.clone();
+            cv::Mat im2 = tagFieldImageCropped.clone();
+            cv::normalize(im1, im1, 0, 255, cv::NORM_MINMAX, CV_8U);
+            cv::normalize(im2, im2, 0, 255, cv::NORM_MINMAX, CV_8U);
+            cv::Mat result;
+            cv::matchTemplate(im1, im2, result, cv::TM_CCORR_NORMED);
+            double min_val;
+            cv::Point min_loc, max_loc;
+            cv::minMaxLoc(result, &min_val, &hcorr, &min_loc, &max_loc);
+            if (hcorr < 0.8)
+            {
+                continue;
+            }
+
+            // evaluate SSIM
+            // cv::Scalar hcorr_ssim = evalSSIM(im1, im2).first;
+#endif
 
             // draw ROI and features onto img_show
             int x = templ[0].width + match.x;
@@ -213,6 +230,37 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
                 cv::FONT_HERSHEY_PLAIN, 1.0f, randColor, 2
             );
 
+#if 1
+            cv::Rect tCrop;
+            for (const auto& crop: modelTag->crops)
+            {
+                // Resize model size for tag image
+                int maxTagImgP = std::max(img_show.size().width, img_show.size().height);
+                int maxModelP = std::max(modelTag->imageSize.width, modelTag->imageSize.height);
+                float fx = float(maxTagImgP) / float(maxModelP);
+                // float fx = float(maxModelP) / float(maxTagImgP);
+                cv::Size newSize(fx*modelTag->imageSize.width, fx*modelTag->imageSize.height);
+
+                std::cout << "[" << modelTag->modelName << "]: " <<
+                          fx <<
+                          " | " <<
+                          img_show.size() <<
+                          " | " <<
+                          modelTag->imageSize <<
+                          " -> " <<
+                          newSize <<
+                          std::endl;
+
+                tCrop = rotateScaleRect(crop.second, fx, templ[0].orientation, modelTag->imageSize);
+                cv::rectangle(img_show, tCrop, {0, 0, 255}, 1);
+                cv::putText(
+                    img_show,
+                    modelTag->modelName,
+                    cv::Point(tCrop.x, tCrop.y),
+                    cv::FONT_HERSHEY_PLAIN, 1.0f, {0, 0, 255}, 1
+                );
+            }
+#endif
             // Text information
             std::stringstream sscale_t, similarity_t, hcorr_t;
             sscale_t.precision(2);
@@ -224,7 +272,8 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
             std::vector<std::string> extraInfo = {
                 "Box: " + to_string(match.template_id),
                 "Scal/Orient: " + sscale_t.str() + ", " + to_string(int(templ[0].orientation)),
-                "Sim: " + similarity_t.str() + ", Filter Corr: " + hcorr_t.str()
+                "Sim: " + similarity_t.str(),
+                "Filter Corr: " + hcorr_t.str()
             };
 
             showIndividualMatchings(img_roi_gray, tagFieldImageCropped, match.similarity,
@@ -237,9 +286,9 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
 
     if (img_dbg)
     {
-        cv::namedWindow(filename);
-        cv::moveWindow(filename, 680, 400);
-        cv::imshow(filename, img_show);
+        cv::namedWindow(imgfile);
+        cv::moveWindow(imgfile, 680, 400);
+        cv::imshow(imgfile, img_show);
         int key = cv::waitKey(0);
         if (key == 113)
         {
@@ -249,20 +298,24 @@ std::pair<int, int> detectTemplateLinemod(const std::string& filename, const cv:
     }
 
 
-    std::stringstream ss = timer.displayCSV({"MATCH", "NMS", "HCORR"}, filename);
+    std::stringstream ss = timer.displayCSV({"MATCH", "NMS", "HCORR"}, imgfile);
+
+    // print to console
     std::cout << ss.str();
 
-    if(outfile.is_open())
+    // export to file if required
+    if(csvfile.is_open())
     {
-        outfile << ss.rdbuf();
+        csvfile << ss.rdbuf();
     }
     return {0, 0};
 }
 
-void jabil_read_all_templates_and_match(std::string testdir, const bool& img_dbg)
+void jabil_read_all_templates_and_match(std::string testdir, const bool& save_timings, const bool& img_dbg)
 {
+    std::string current_path = fs::current_path().string();
     fs::path path_test_images = fs::canonical(
-        "../../../inspection_images/2023-07-27/JabilCam-modelos/tag_candidate/" + testdir
+        current_path + "/jabil_images/JabilCam_tags/tag_candidate/" + testdir
     );
 
     std::vector<fs::path> filelist;
@@ -278,8 +331,12 @@ void jabil_read_all_templates_and_match(std::string testdir, const bool& img_dbg
     ofstream fgrad("gradients.csv", std::ios::app);
 #endif
 
-    // std::ofstream mycsv(testdir+"_timings.csv");
-    std::ofstream mycsv;
+    std::string csvfilename(testdir+"_timings.csv");
+    std::ofstream csvfstream;
+    if (save_timings)
+    {
+        csvfstream.open(csvfilename);
+    }
 
     for(auto &f: filelist)
     {
@@ -296,15 +353,31 @@ void jabil_read_all_templates_and_match(std::string testdir, const bool& img_dbg
         cv::Rect roi(0, 0, stride*m , stride*n);
         cv::Mat img = img_orig(roi).clone();
 
-        std::pair<int, int> matchingResult = detectTemplateLinemod(f.filename(), img, mycsv, img_dbg);
+        std::pair<int, int> matchingResult = detectTemplateLinemod(f.filename(), img, csvfstream, img_dbg);
     }
+
+    if (save_timings)
+    {
+        csvfstream.close();
+    }
+
+    csv::CSVStat reader(csvfilename);
+    std::vector<long double> mins = reader.get_mins();
+    std::vector<long double> maxes = reader.get_maxes();
+    std::vector<long double> means = reader.get_mean();
+
+    for (const auto t: means)
+    {
+        std::cout << t << std::endl;
+    }
+
 }
 
 int main(int argc, const char** argv)
 {
     float weak_threshold, strong_threshold;
     int num_features;
-    bool create_templates, create_templates_only, debug;
+    bool create_templates, tsave, debug;
     boost::program_options::options_description desc("Allowed options");
 
     desc.add_options()
@@ -329,19 +402,19 @@ int main(int argc, const char** argv)
             "Create templates before processing images?"
         )
         (
-            "create_template_only,k",
-            boost::program_options::value<bool>(&create_templates_only)->default_value(false),
-            "Create templates only?"
-        )
-        (
             "debug,v",
             boost::program_options::value<bool>(&debug)->default_value(false),
             "Debug with images"
         )
         (
+            "export,e",
+            boost::program_options::value<bool>(&tsave)->default_value(false),
+            "Export timing to a CSV file"
+        )
+        (
             "testdir,t",
             boost::program_options::value<std::string>(),
-            "Test directory"
+            "Test directory (last component of path ./jabil_images/JabilCam_tags/tag_candidate/<MANUFACTURER> )"
         )
         ("help,h", "Print usage information");
 
@@ -360,30 +433,34 @@ int main(int argc, const char** argv)
         return 0;
     }
 
-    std::string testdir = "VIKING";
+    std::string testdir = "";
     if(vm.count("testdir"))
     {
         testdir = vm["testdir"].as<std::string>();
     }
 
+    std::cout << "----------------------------------------------" << std::endl;
     std::cout << "Weak threshold: " << weak_threshold << std::endl;
     std::cout << "Strong threshold: " << strong_threshold << std::endl;
     std::cout << "Number of features: " << num_features << std::endl;
     std::cout << "Create templates? " << create_templates << std::endl;
     std::cout << "Test directory: " << testdir << std::endl;
     std::cout << "Debug (images): " << debug << std::endl;
+    std::cout << "----------------------------------------------" << std::endl << std::endl;
 
-    if(create_templates_only)
+    if (create_templates)
     {
         createLinemod2DTemplates(weak_threshold, strong_threshold, num_features);
     }
-    else
+
+    if (!testdir.empty())
     {
-        if (create_templates)
-        {
-            createLinemod2DTemplates(weak_threshold, strong_threshold, num_features);
-        }
-        jabil_read_all_templates_and_match(testdir, debug);
+        jabil_read_all_templates_and_match(testdir, tsave, debug);
+    }
+
+    if (testdir.empty() && (!create_templates))
+    {
+        std::cout << desc << std::endl;
     }
 
     return 0;

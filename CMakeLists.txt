@@ -25,6 +25,7 @@ SET(CMAKE_CXX_FLAGS_DEBUG "-O0 -g2 -ggdb")
 SET(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
 # add CSV parser/writer utility
+set(CSV_CXX_STANDARD 11)
 add_subdirectory(csv-parser)
 
 #add Persistence layer
@@ -49,7 +50,7 @@ add_executable(
     line2Dup.h line2Dup.cpp
     test_jabil.cpp
 )
-target_link_libraries(${PROJECT_NAME}_test ${OpenCV_LIBS} ${Boost_LIBRARIES} Persistence stdc++fs)
+target_link_libraries(${PROJECT_NAME}_test ${OpenCV_LIBS} ${Boost_LIBRARIES} Persistence stdc++fs csv)
 
 add_executable(
     ${PROJECT_NAME}_test_old
@@ -71,4 +72,5 @@ add_executable(
 )
 target_link_libraries(test_scalrot ${OpenCV_LIBS} ${Boost_LIBRARIES} Persistence stdc++fs)
 
-file(COPY model_images DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+file(CREATE_LINK ${CMAKE_CURRENT_SOURCE_DIR}/model_images ${CMAKE_CURRENT_BINARY_DIR}/model_images SYMBOLIC)
+file(CREATE_LINK ${CMAKE_CURRENT_SOURCE_DIR}/jabil_images ${CMAKE_CURRENT_BINARY_DIR}/jabil_images SYMBOLIC)

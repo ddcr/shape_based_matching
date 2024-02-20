@@ -66,7 +66,7 @@ void Template::read(const FileNode &fn)
     // fn["modelImageSize"] >> size;
     // modelImageSize = cv::Size(size[0], size[1]);
 
-    // tagFieldID = fn["tagFieldID"];
+    tagFieldID = fn["tagFieldID"];
     fn["fiducial_src"] >> fiducial_src;
     // std::vector<int> rect;
     // fn["crop"] >> rect;
@@ -97,7 +97,7 @@ void Template::write(FileStorage &fs) const
     // fs << "model_src" << model_src;
     // fs << "modelImageSize" << modelImageSize;
 
-    // fs << "tagFieldID" << tagFieldID;
+    fs << "tagFieldID" << tagFieldID;
     fs << "fiducial_src" << fiducial_src;
     // fs << "crop" << crop;
 
@@ -148,7 +148,7 @@ static Rect cropTemplates(std::vector<Template> &templates)
         templ.width = (max_x - min_x) >> templ.pyramid_level;
         templ.height = (max_y - min_y) >> templ.pyramid_level;
         templ.tl_x = min_x >> templ.pyramid_level;
-        templ.tl_y = min_y  >> templ.pyramid_level;
+        templ.tl_y = min_y >> templ.pyramid_level;
 
         for (int j = 0; j < (int)templ.features.size(); ++j)
         {
@@ -1303,7 +1303,7 @@ int Detector::addTemplate(const Mat source, const std::string &class_id,
                         //   int modelID,
                         //   std::string model_src,
                         //   cv::Size modelImageSize,
-                        //   int tagFieldID,
+                          int tagFieldID,
                           std::string fiducial_src,
                         //   cv::Rect crop,
                           int num_features)
@@ -1335,7 +1335,7 @@ int Detector::addTemplate(const Mat source, const std::string &class_id,
             // tp[l].model_src = model_src;
             // tp[l].modelImageSize = modelImageSize;
 
-            // tp[l].tagFieldID = tagFieldID;
+            tp[l].tagFieldID = tagFieldID;
             // tp[l].crop = crop;
             tp[l].fiducial_src = fiducial_src;
 
@@ -1358,7 +1358,7 @@ Detector* Detector::getInstance()
     {
         std::string current_path = fs::current_path().string();
         std::cout << "Loading LINE-MOD settings ..." << std::endl;
-        Detector::instance = Detector::getInstance(current_path+"/detector_linemod.yaml");
+        Detector::instance = Detector::getInstance(current_path+"/model_images/detector_linemod.yaml");
     }
     return Detector::instance;
 }

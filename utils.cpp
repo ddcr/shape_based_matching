@@ -335,7 +335,7 @@ void showIndividualMatchings(const cv::Mat& img_roi, const cv::Mat& imgfid_roi,
                 }
             );
             // choose the widest string element
-            cv::Size widestStringSize = cv::getTextSize(*it_widest, FONT_HERSHEY_PLAIN, 1.0f, 2, 0) + cv::Size(20, 0);
+            cv::Size widestStringSize = cv::getTextSize(*it_widest, FONT_HERSHEY_PLAIN, 1.0f, 2, 0) + cv::Size(50, 0);
             cv::Mat rightArea(frame.rows, widestStringSize.width, CV_8U, cv::Scalar(0, 0, 0));
             int irow = 0;
             for (auto& t: extraInfo)
@@ -455,7 +455,7 @@ double compHistogram(const std::vector<double>& h1, const std::vector<double>& h
 std::pair<cv::Scalar, cv::Mat> evalSSIM(const cv::Mat& img1_in, const cv::Mat& img2_in)
 {
 
-	// default settings
+	// default settings (data range of images = 255)
 	const float C1 = 6.5025, C2 = 58.5225;
 
 	cv::Mat img1, img2;
@@ -510,12 +510,14 @@ std::pair<cv::Scalar, cv::Mat> evalSSIM(const cv::Mat& img1_in, const cv::Mat& i
 	cv::Mat ssim_map;
 	cv::divide(t3, t1, ssim_map);
 
-#ifdef CROP
+#if 1
 	//skimage: to avoid edge effects will ignore filter radius strip around edges
 	cv::Rect crop(5, 5, ssim_map.cols-5, ssim_map.rows-5);
 	cv::Mat ssim_map_cropped = ssim_map(crop);
-#endif
-
+	const cv::Scalar mssim = cv::mean(ssim_map_cropped);
+	return {mssim, std::move(ssim_map_cropped)};
+#else
 	const cv::Scalar mssim = cv::mean(ssim_map);
 	return {mssim, std::move(ssim_map)};
+#endif
 }
